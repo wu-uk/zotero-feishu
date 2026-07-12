@@ -6,7 +6,7 @@ import type {
   TextStyle,
 } from "./types";
 
-const DOCUMENT_SCHEMA_VERSION = 7;
+const DOCUMENT_SCHEMA_VERSION = 8;
 
 interface SourceData {
   key: string;
@@ -220,6 +220,10 @@ function appendBlockNode(node: Node, blocks: RichBlock[]): void {
     blocks.push({ type: "divider" });
     return;
   }
+  if (tag === "img") {
+    appendImageBlock(element, blocks);
+    return;
+  }
   if (tag === "ul" || tag === "ol") {
     Array.from(element.children).forEach((child) => {
       if (child.tagName.toLowerCase() === "li") {
@@ -271,16 +275,7 @@ function appendInlineBlock(
     const tag = childElement.tagName.toLowerCase();
     if (tag === "img") {
       flush();
-      const attachmentKey =
-        childElement.getAttribute("data-attachment-key") || "";
-      blocks.push({
-        type: "image",
-        attachmentKey,
-        alt:
-          childElement.getAttribute("alt") || attachmentKey || "embedded image",
-        width: numberAttribute(childElement, "width"),
-        height: numberAttribute(childElement, "height"),
-      });
+      appendImageBlock(childElement, blocks);
       return;
     }
     if (tag === "br") {
@@ -312,6 +307,17 @@ function appendInlineBlock(
     if (node) walk(node);
   });
   flush();
+}
+
+function appendImageBlock(element: Element, blocks: RichBlock[]): void {
+  const attachmentKey = element.getAttribute("data-attachment-key") || "";
+  blocks.push({
+    type: "image",
+    attachmentKey,
+    alt: element.getAttribute("alt") || attachmentKey || "embedded image",
+    width: numberAttribute(element, "width"),
+    height: numberAttribute(element, "height"),
+  });
 }
 
 function safeLink(value: string | null): string | undefined {
