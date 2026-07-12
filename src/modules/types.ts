@@ -34,22 +34,34 @@ export interface TextRun {
   style?: TextStyle;
 }
 
+export interface TextBlock {
+  type:
+    | "paragraph"
+    | "heading1"
+    | "heading2"
+    | "heading3"
+    | "heading4"
+    | "heading5"
+    | "heading6"
+    | "bullet"
+    | "ordered"
+    | "quote"
+    | "code";
+  runs: TextRun[];
+}
+
+export interface CalloutBlock {
+  type: "callout";
+  backgroundColor?: number;
+  borderColor?: number;
+  textColor?: number;
+  emojiId?: string;
+  children: TextBlock[];
+}
+
 export type RichBlock =
-  | {
-      type:
-        | "paragraph"
-        | "heading1"
-        | "heading2"
-        | "heading3"
-        | "heading4"
-        | "heading5"
-        | "heading6"
-        | "bullet"
-        | "ordered"
-        | "quote"
-        | "code";
-      runs: TextRun[];
-    }
+  | TextBlock
+  | CalloutBlock
   | { type: "divider" }
   | { type: "html"; content: string }
   | {

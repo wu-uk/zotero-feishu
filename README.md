@@ -12,6 +12,7 @@ managed Feishu document content.
 - Create one Feishu Docx per regular item in a configured folder.
 - Preserve Markdown-equivalent note structure, including headings, lists,
   quotes, code blocks, task lists, and tables, and upload embedded note images.
+- Present literature metadata in a native Feishu callout for faster scanning.
 - Skip unchanged items using a local source hash.
 - Open or explicitly delete a linked Feishu document.
 

@@ -1,4 +1,4 @@
-import type { RichBlock, TextRun } from "./types";
+import type { CalloutBlock, RichBlock, TextBlock, TextRun } from "./types";
 import { OAuthService } from "./oauthService";
 
 const API = "https://open.feishu.cn/open-apis";
@@ -95,14 +95,7 @@ export class FeishuClient {
     }
 
     const existing = await this.getRootChildren(documentId);
-    if (existing.length) {
-      await this.documentRateLimit();
-      await this.request(
-        "DELETE",
-        `/docx/v1/documents/${documentId}/blocks/${documentId}/children/batch_delete?document_revision_id=-1`,
-        { start_index: 0, end_index: existing.length },
-      );
-    }
+    await this.deleteChildren(documentId, documentId, existing.length);
 
     let pending: any[] = [];
     const flush = async () => {
@@ -118,6 +111,11 @@ export class FeishuClient {
           documentId,
           convertedSegments.get(block)!,
         );
+        continue;
+      }
+      if (block.type === "callout") {
+        await flush();
+        await this.appendCallout(documentId, block);
         continue;
       }
       if (block.type !== "image") {
@@ -170,6 +168,13 @@ export class FeishuClient {
   }
 
   private async getRootChildren(documentId: string): Promise<any[]> {
+    return this.getChildren(documentId, documentId);
+  }
+
+  private async getChildren(
+    documentId: string,
+    parentBlockId: string,
+  ): Promise<any[]> {
     const items: any[] = [];
     let pageToken = "";
     do {
@@ -178,7 +183,7 @@ export class FeishuClient {
         : "";
       const data = await this.request(
         "GET",
-        `/docx/v1/documents/${documentId}/blocks/${documentId}/children?page_size=500${suffix}`,
+        `/docx/v1/documents/${documentId}/blocks/${parentBlockId}/children?page_size=500${suffix}`,
       );
       items.push(...(data.items || []));
       pageToken = data.has_more ? data.page_token || "" : "";
@@ -186,17 +191,45 @@ export class FeishuClient {
     return items;
   }
 
+  private async deleteChildren(
+    documentId: string,
+    parentBlockId: string,
+    count: number,
+  ): Promise<void> {
+    if (!count) return;
+    await this.documentRateLimit();
+    await this.request(
+      "DELETE",
+      `/docx/v1/documents/${documentId}/blocks/${parentBlockId}/children/batch_delete?document_revision_id=-1`,
+      { start_index: 0, end_index: count },
+    );
+  }
+
   private async appendBlocks(
     documentId: string,
     children: any[],
+    parentBlockId = documentId,
   ): Promise<any[]> {
     await this.documentRateLimit();
     const data = await this.request(
       "POST",
-      `/docx/v1/documents/${documentId}/blocks/${documentId}/children?document_revision_id=-1`,
+      `/docx/v1/documents/${documentId}/blocks/${parentBlockId}/children?document_revision_id=-1`,
       { index: -1, children },
     );
     return data.children || [];
+  }
+
+  private async appendCallout(
+    documentId: string,
+    block: CalloutBlock,
+  ): Promise<void> {
+    const prepared = prepareCalloutBlock(block);
+    await this.documentRateLimit();
+    await this.request(
+      "POST",
+      `/docx/v1/documents/${documentId}/blocks/${documentId}/descendant?document_revision_id=-1`,
+      { index: -1, ...prepared },
+    );
   }
 
   private async convertHtml(content: string): Promise<ConvertedBlocks> {
@@ -439,9 +472,45 @@ function imageMimeType(name: string): string {
   );
 }
 
-function toFeishuBlock(
-  block: Exclude<RichBlock, { type: "html" } | { type: "image" }>,
-): any {
+export function prepareCalloutBlock(
+  block: CalloutBlock,
+  calloutId = temporaryBlockId(),
+): { children_id: string[]; descendants: any[] } {
+  const childIds = block.children.map(
+    (_, index) => `${calloutId}_child_${index}`,
+  );
+  return {
+    children_id: [calloutId],
+    descendants: [
+      {
+        block_id: calloutId,
+        block_type: 19,
+        callout: {
+          ...(block.backgroundColor
+            ? { background_color: block.backgroundColor }
+            : {}),
+          ...(block.borderColor ? { border_color: block.borderColor } : {}),
+          ...(block.textColor ? { text_color: block.textColor } : {}),
+          ...(block.emojiId ? { emoji_id: block.emojiId } : {}),
+        },
+        children: childIds,
+      },
+      ...block.children.map((child, index) => ({
+        block_id: childIds[index],
+        ...toFeishuBlock(child),
+        children: [],
+      })),
+    ],
+  };
+}
+
+function temporaryBlockId(): string {
+  return `tmp_${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+}
+
+function toFeishuBlock(block: TextBlock | { type: "divider" }): any {
   if (block.type === "divider") return { block_type: 22, divider: {} };
   const mapping: Record<string, [number, string]> = {
     paragraph: [2, "text"],

@@ -1,6 +1,12 @@
-import type { DocumentModel, RichBlock, TextRun, TextStyle } from "./types";
+import type {
+  DocumentModel,
+  RichBlock,
+  TextBlock,
+  TextRun,
+  TextStyle,
+} from "./types";
 
-const DOCUMENT_SCHEMA_VERSION = 3;
+const DOCUMENT_SCHEMA_VERSION = 7;
 
 interface SourceData {
   key: string;
@@ -29,14 +35,20 @@ export async function buildDocument(item: Zotero.Item): Promise<DocumentModel> {
       ],
     },
     { type: "divider" },
-    { type: "heading1", runs: [{ text: "Metadata" }] },
-    metadataLine("Authors", source.authors),
-    metadataLine("Year", source.year),
-    metadataLine("Type", source.itemType),
-    metadataLine("Publication", source.publication),
-    metadataLine("DOI", source.doi, doiLink(source.doi)),
-    metadataLine("URL", source.url, source.url),
-    metadataLine("Tags", source.tags.join(", ")),
+    {
+      type: "callout",
+      backgroundColor: 14,
+      emojiId: "star",
+      children: [
+        metadataLine("Authors", source.authors),
+        metadataLine("Year", source.year),
+        metadataLine("Type", source.itemType),
+        metadataLine("Publication", source.publication),
+        metadataLine("DOI", source.doi, doiLink(source.doi)),
+        metadataLine("URL", source.url, source.url),
+        metadataLine("Tags", source.tags.join(", ")),
+      ],
+    },
   ];
 
   if (source.abstract) {
@@ -111,7 +123,7 @@ function field(item: Zotero.Item, name: string): string {
   return value ? String(value) : "";
 }
 
-function metadataLine(label: string, value: string, link?: string): RichBlock {
+function metadataLine(label: string, value: string, link?: string): TextBlock {
   const runs: TextRun[] = [{ text: `${label}: `, style: { bold: true } }];
   runs.push({ text: value || "-", ...(link ? { style: { link } } : {}) });
   return { type: "paragraph", runs };
@@ -237,7 +249,7 @@ function appendBlockNode(node: Node, blocks: RichBlock[]): void {
   appendInlineBlock(element, type as TextBlockType, blocks);
 }
 
-type TextBlockType = Exclude<RichBlock["type"], "divider" | "html" | "image">;
+type TextBlockType = TextBlock["type"];
 
 function appendInlineBlock(
   element: Element,

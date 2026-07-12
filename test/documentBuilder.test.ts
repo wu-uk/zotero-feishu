@@ -2,6 +2,7 @@ import { assert } from "chai";
 import { noteHtmlToBlocks } from "../src/modules/documentBuilder";
 import {
   parseFolderToken,
+  prepareCalloutBlock,
   prepareConvertedBlocks,
   requireMediaFileToken,
 } from "../src/modules/feishuClient";
@@ -65,6 +66,39 @@ describe("Zotero Feishu Sync helpers", function () {
     assert.throws(
       () => requireMediaFileToken({}),
       "Feishu did not return an image file token",
+    );
+  });
+
+  it("maps metadata callouts to a Feishu container and child blocks", function () {
+    const prepared = prepareCalloutBlock(
+      {
+        type: "callout",
+        backgroundColor: 14,
+        emojiId: "star",
+        children: [
+          {
+            type: "paragraph",
+            runs: [
+              { text: "Authors: ", style: { bold: true } },
+              { text: "Example Author" },
+            ],
+          },
+        ],
+      },
+      "metadata_callout",
+    );
+    assert.deepEqual(prepared.children_id, ["metadata_callout"]);
+    assert.deepInclude(prepared.descendants[0], {
+      block_id: "metadata_callout",
+      block_type: 19,
+      callout: { background_color: 14, emoji_id: "star" },
+      children: ["metadata_callout_child_0"],
+    });
+    assert.equal(prepared.descendants[1].block_id, "metadata_callout_child_0");
+    assert.equal(prepared.descendants[1].block_type, 2);
+    assert.equal(
+      prepared.descendants[1].text.elements[0].text_run.content,
+      "Authors: ",
     );
   });
 
