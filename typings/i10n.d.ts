@@ -21,4 +21,14 @@ export type FluentMessageId =
   | 'pref-test'
   | 'pref-title'
   | 'sync-no-items'
-  | 'sync-starting';
+  | 'sync-outcome-created'
+  | 'sync-outcome-failed'
+  | 'sync-outcome-partial'
+  | 'sync-outcome-unchanged'
+  | 'sync-outcome-updated'
+  | 'sync-starting'
+  | 'sync-status-column'
+  | 'sync-status-failed'
+  | 'sync-status-failed-generic'
+  | 'sync-status-success'
+  | 'sync-status-syncing';

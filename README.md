@@ -13,6 +13,7 @@ managed Feishu document content.
 - Preserve Markdown-equivalent note structure, including headings, lists,
   quotes, code blocks, task lists, and tables, and upload embedded note images.
 - Present literature metadata in a native Feishu callout for faster scanning.
+- Show per-item syncing, success, and failure indicators in the Zotero item tree.
 - Skip unchanged items using a local source hash.
 - Open or explicitly delete a linked Feishu document.
 

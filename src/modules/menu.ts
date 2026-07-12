@@ -1,4 +1,5 @@
 import { getString } from "../utils/locale";
+import { uniqueRegularUserItems } from "./syncService";
 import type { SyncResult } from "./types";
 
 export function registerMenus(win: _ZoteroTypes.MainWindow): void {
@@ -47,40 +48,20 @@ function selectedItems(): Zotero.Item[] {
 }
 
 async function syncItems(items: Zotero.Item[]): Promise<void> {
-  const progress = new ztoolkit.ProgressWindow(addon.data.config.addonName, {
-    closeOnClick: true,
-    closeTime: -1,
-  })
-    .createLine({ text: getString("sync-starting"), progress: 0 })
-    .show();
+  const syncableItems = uniqueRegularUserItems(items);
+  addon.syncStatus.markSyncing(syncableItems);
   try {
     const results = await addon.sync.syncItems(
-      items,
-      (completed, total, result) => {
-        progress.changeLine({
-          text: `${completed}/${total} ${result.title}`,
-          progress: total ? Math.round((completed / total) * 100) : 100,
-          type: result.outcome === "failed" ? "fail" : "success",
-        });
+      syncableItems,
+      (_completed, _total, result) => {
+        addon.syncStatus.markResult(result);
       },
     );
-    progress.changeLine({
-      text: summarize(results),
-      progress: 100,
-      type: results.some((result) => result.outcome === "failed")
-        ? "fail"
-        : "success",
-    });
-    progress.startCloseTimer(8000);
     if (results.some((result) => result.errors.length)) {
       showErrorDialog(results);
     }
   } catch (error) {
-    progress.changeLine({
-      text: errorMessage(error),
-      progress: 100,
-      type: "fail",
-    });
+    addon.syncStatus.markFailed(syncableItems, errorMessage(error));
   }
 }
 
@@ -145,19 +126,6 @@ async function deleteSelected(win: Window): Promise<void> {
   } catch (error) {
     win.alert(errorMessage(error));
   }
-}
-
-function summarize(results: SyncResult[]): string {
-  const counts = new Map<string, number>();
-  results.forEach((result) =>
-    counts.set(result.outcome, (counts.get(result.outcome) || 0) + 1),
-  );
-  if (!results.length) return getString("sync-no-items");
-  const summary = ["created", "updated", "unchanged", "partial", "failed"]
-    .map((key) => `${key}: ${counts.get(key) || 0}`)
-    .join(" | ");
-  const firstError = results.find((result) => result.errors.length)?.errors[0];
-  return firstError ? `${summary} | ${firstError}` : summary;
 }
 
 function errorMessage(error: unknown): string {

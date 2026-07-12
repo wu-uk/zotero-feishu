@@ -1,6 +1,7 @@
 import { config } from "../package.json";
 import hooks from "./hooks";
 import { SyncService } from "./modules/syncService";
+import { SyncStatusService } from "./modules/syncStatus";
 import { createZToolkit } from "./utils/ztoolkit";
 
 class Addon {
@@ -14,11 +15,13 @@ class Addon {
     locale?: {
       current: any;
     };
+    preferencePaneID?: string;
     prefs?: { window: Window };
   };
   // Lifecycle hooks
   public hooks: typeof hooks;
   public sync: SyncService;
+  public syncStatus: SyncStatusService;
   // APIs
   public api: object;
 
@@ -32,6 +35,7 @@ class Addon {
     };
     this.hooks = hooks;
     this.sync = new SyncService();
+    this.syncStatus = new SyncStatusService();
     this.api = {};
   }
 }

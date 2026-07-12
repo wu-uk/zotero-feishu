@@ -86,6 +86,7 @@ export type SyncOutcome =
   | "failed";
 
 export interface SyncResult {
+  libraryID: number;
   itemKey: string;
   title: string;
   outcome: SyncOutcome;

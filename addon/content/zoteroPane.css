@@ -1,3 +1,79 @@
-.makeItRed {
-  background-color: tomato;
+.zotero-feishu-sync-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0;
+}
+
+.zotero-feishu-sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.zotero-feishu-sync-indicator.is-syncing {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(74, 85, 104, 0.28);
+  border-top-color: #356fd3;
+  border-radius: 50%;
+  animation: zotero-feishu-spin 0.8s linear infinite;
+}
+
+.zotero-feishu-sync-indicator.is-success {
+  color: #247a3c;
+}
+
+.zotero-feishu-sync-indicator.is-failed {
+  color: #c43131;
+}
+
+#zotero-items-tree
+  .virtualized-table:focus-within
+  .row.selected
+  .zotero-feishu-sync-indicator {
+  color: var(--color-accent-text);
+}
+
+#zotero-items-tree
+  .virtualized-table:focus-within
+  .row.selected
+  .zotero-feishu-sync-indicator.is-syncing {
+  border-color: rgba(255, 255, 255, 0.42);
+  border-top-color: var(--color-accent-text);
+}
+
+@keyframes zotero-feishu-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .zotero-feishu-sync-indicator.is-syncing {
+    border-color: rgba(226, 232, 240, 0.32);
+    border-top-color: #75a7ff;
+  }
+
+  .zotero-feishu-sync-indicator.is-success {
+    color: #62c77c;
+  }
+
+  .zotero-feishu-sync-indicator.is-failed {
+    color: #ff7777;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zotero-feishu-sync-indicator.is-syncing {
+    animation-duration: 1.6s;
+  }
 }

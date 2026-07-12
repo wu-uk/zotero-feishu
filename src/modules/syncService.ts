@@ -41,6 +41,7 @@ export class SyncService {
   async syncItem(item: Zotero.Item): Promise<SyncResult> {
     const title = String(item.getField("title") || "Untitled");
     const base: SyncResult = {
+      libraryID: item.libraryID,
       itemKey: item.key,
       title,
       outcome: "failed",
