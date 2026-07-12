@@ -1,11 +1,5 @@
-item-section-example1-head-text =
-    .label = 插件模板: 条目信息
-item-section-example1-sidenav-tooltip =
-    .tooltiptext = 这是插件模板面板(条目信息)
-item-section-example2-head-text =
-    .label = 插件模板: 阅读器[{$status}]
-item-section-example2-sidenav-tooltip =
-    .tooltiptext = 这是插件模板面板(阅读器)
-item-section-example2-button-tooltip =
-    .tooltiptext = 移除此面板
-item-info-row-example-label = 示例行
+menu-root = 飞书同步
+menu-sync-selected = 同步选中文献
+menu-sync-collection = 同步当前分类到飞书
+menu-open-document = 打开飞书文档
+menu-delete-document = 删除飞书文档

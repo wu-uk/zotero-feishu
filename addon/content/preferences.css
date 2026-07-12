@@ -1,0 +1,33 @@
+.zotero-feishu-preferences {
+  max-width: 760px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(280px, 1fr);
+  gap: 10px 14px;
+  align-items: center;
+}
+
+.settings-grid input {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+#zotero-feishu-status {
+  margin-left: 8px;
+}
+
+.settings-help {
+  color: GrayText;
+  line-height: 1.4;
+  margin-top: 14px;
+}

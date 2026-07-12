@@ -1,5 +1,9 @@
-pref-title = 插件模板设置示例
-pref-enable =
-    .label = 开启
-pref-input = 输入
-pref-help = { $name } Build { $version } { $time }
+pref-title = Zotero 飞书同步
+pref-app-id = 飞书 App ID
+pref-app-secret = 飞书 App Secret
+pref-target-folder = 目标文件夹链接或 Token（可选）
+pref-redirect-uri = OAuth 重定向地址
+pref-authorize = 授权飞书账号
+pref-test = 测试连接
+pref-logout = 清除授权
+pref-help = 目标文件夹留空时使用“我的空间”根目录。请将上方重定向地址添加到飞书应用安全设置，并在发布应用前开通 docx:document、docs:document.media:upload、drive:file:upload、drive:drive.metadata:readonly、space:document:delete 和 offline_access 权限。

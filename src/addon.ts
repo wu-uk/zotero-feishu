@@ -1,6 +1,6 @@
 import { config } from "../package.json";
-import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
+import { SyncService } from "./modules/syncService";
 import { createZToolkit } from "./utils/ztoolkit";
 
 class Addon {
@@ -14,15 +14,11 @@ class Addon {
     locale?: {
       current: any;
     };
-    prefs?: {
-      window: Window;
-      columns: Array<ColumnOptions>;
-      rows: Array<{ [dataKey: string]: string }>;
-    };
-    dialog?: DialogHelper;
+    prefs?: { window: Window };
   };
   // Lifecycle hooks
   public hooks: typeof hooks;
+  public sync: SyncService;
   // APIs
   public api: object;
 
@@ -35,6 +31,7 @@ class Addon {
       ztoolkit: createZToolkit(),
     };
     this.hooks = hooks;
+    this.sync = new SyncService();
     this.api = {};
   }
 }

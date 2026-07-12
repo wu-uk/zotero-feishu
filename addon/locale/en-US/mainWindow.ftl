@@ -1,11 +1,5 @@
-item-section-example1-head-text =
-    .label = Plugin Template: Item Info
-item-section-example1-sidenav-tooltip =
-    .tooltiptext = This is Plugin Template section (item info)
-item-section-example2-head-text =
-    .label = Plugin Template: Reader [{$status}]
-item-section-example2-sidenav-tooltip =
-    .tooltiptext = This is Plugin Template section (reader)
-item-section-example2-button-tooltip =
-    .tooltiptext = Unregister this section
-item-info-row-example-label = Example Row
+menu-root = Feishu Sync
+menu-sync-selected = Sync selected items
+menu-sync-collection = Sync current collection to Feishu
+menu-open-document = Open Feishu document
+menu-delete-document = Delete Feishu document
