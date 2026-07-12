@@ -240,45 +240,56 @@ export class FeishuClient {
     const bytes = (await ioUtils.read(path)) as Uint8Array;
     const pathUtils = ztoolkit.getGlobal("PathUtils") as any;
     const name = pathUtils.filename(path);
+    let uploaded: any;
     if (bytes.byteLength <= SIMPLE_UPLOAD_LIMIT) {
       const form = mediaForm(name, blockId, documentId, bytes);
-      await this.mediaRequest("/drive/v1/medias/upload_all", form);
-      return;
-    }
-
-    const prepared = await this.request(
-      "POST",
-      "/drive/v1/medias/upload_prepare",
-      {
-        file_name: name,
-        parent_type: "docx_image",
-        parent_node: blockId,
-        size: bytes.byteLength,
-        extra: JSON.stringify({ drive_route_token: documentId }),
-      },
-    );
-    const uploadId = prepared.upload_id;
-    const blockSize = Number(prepared.block_size || PART_SIZE);
-    const blockNum = Number(
-      prepared.block_num || Math.ceil(bytes.length / blockSize),
-    );
-    for (let seq = 0; seq < blockNum; seq++) {
-      const part = bytes.slice(
-        seq * blockSize,
-        Math.min((seq + 1) * blockSize, bytes.length),
+      uploaded = await this.mediaRequest("/drive/v1/medias/upload_all", form);
+    } else {
+      const prepared = await this.request(
+        "POST",
+        "/drive/v1/medias/upload_prepare",
+        {
+          file_name: name,
+          parent_type: "docx_image",
+          parent_node: blockId,
+          size: bytes.byteLength,
+          extra: JSON.stringify({ drive_route_token: documentId }),
+        },
       );
-      const win = Zotero.getMainWindow() as any;
-      const formData = new win.FormData();
-      formData.append("upload_id", uploadId);
-      formData.append("seq", String(seq));
-      formData.append("size", String(part.byteLength));
-      formData.append("file", new win.Blob([part]), name);
-      await this.mediaRequest("/drive/v1/medias/upload_part", formData);
+      const uploadId = prepared.upload_id;
+      const blockSize = Number(prepared.block_size || PART_SIZE);
+      const blockNum = Number(
+        prepared.block_num || Math.ceil(bytes.length / blockSize),
+      );
+      for (let seq = 0; seq < blockNum; seq++) {
+        const part = bytes.slice(
+          seq * blockSize,
+          Math.min((seq + 1) * blockSize, bytes.length),
+        );
+        const win = Zotero.getMainWindow() as any;
+        const formData = new win.FormData();
+        formData.append("upload_id", uploadId);
+        formData.append("seq", String(seq));
+        formData.append("size", String(part.byteLength));
+        formData.append(
+          "file",
+          new win.Blob([part], { type: imageMimeType(name) }),
+          name,
+        );
+        await this.mediaRequest("/drive/v1/medias/upload_part", formData);
+      }
+      uploaded = await this.request("POST", "/drive/v1/medias/upload_finish", {
+        upload_id: uploadId,
+        block_num: blockNum,
+      });
     }
-    await this.request("POST", "/drive/v1/medias/upload_finish", {
-      upload_id: uploadId,
-      block_num: blockNum,
-    });
+    const fileToken = requireMediaFileToken(uploaded);
+    await this.documentRateLimit();
+    await this.request(
+      "PATCH",
+      `/docx/v1/documents/${documentId}/blocks/${blockId}?document_revision_id=-1`,
+      { replace_image: { token: fileToken } },
+    );
   }
 
   private async mediaRequest(path: string, body: FormData): Promise<any> {
@@ -398,8 +409,34 @@ function mediaForm(
   form.append("parent_node", blockId);
   form.append("size", String(bytes.byteLength));
   form.append("extra", JSON.stringify({ drive_route_token: documentId }));
-  form.append("file", new win.Blob([bytes]), name);
+  form.append(
+    "file",
+    new win.Blob([bytes], { type: imageMimeType(name) }),
+    name,
+  );
   return form;
+}
+
+export function requireMediaFileToken(data: any): string {
+  const token = String(data?.file_token || "");
+  if (!token) throw new Error("Feishu did not return an image file token");
+  return token;
+}
+
+function imageMimeType(name: string): string {
+  const extension = name.split(".").pop()?.toLowerCase();
+  return (
+    {
+      avif: "image/avif",
+      bmp: "image/bmp",
+      gif: "image/gif",
+      jpeg: "image/jpeg",
+      jpg: "image/jpeg",
+      png: "image/png",
+      svg: "image/svg+xml",
+      webp: "image/webp",
+    }[extension || ""] || "application/octet-stream"
+  );
 }
 
 function toFeishuBlock(

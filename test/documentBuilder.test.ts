@@ -3,6 +3,7 @@ import { noteHtmlToBlocks } from "../src/modules/documentBuilder";
 import {
   parseFolderToken,
   prepareConvertedBlocks,
+  requireMediaFileToken,
 } from "../src/modules/feishuClient";
 
 describe("Zotero Feishu Sync helpers", function () {
@@ -54,6 +55,17 @@ describe("Zotero Feishu Sync helpers", function () {
     const [prepared] = prepareConvertedBlocks(source);
     assert.notProperty(prepared.table.property, "merge_info");
     assert.property(source[0].table.property, "merge_info");
+  });
+
+  it("requires the uploaded image file token", function () {
+    assert.equal(
+      requireMediaFileToken({ file_token: "boxcnImage123" }),
+      "boxcnImage123",
+    );
+    assert.throws(
+      () => requireMediaFileToken({}),
+      "Feishu did not return an image file token",
+    );
   });
 
   it("accepts raw tokens and folder URLs", function () {

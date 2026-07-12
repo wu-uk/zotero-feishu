@@ -1,6 +1,6 @@
 import type { DocumentModel, RichBlock, TextRun, TextStyle } from "./types";
 
-const DOCUMENT_SCHEMA_VERSION = 2;
+const DOCUMENT_SCHEMA_VERSION = 3;
 
 interface SourceData {
   key: string;

@@ -1,7 +1,7 @@
 {
   "name": "zotero-feishu",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Sync Zotero literature and notes to Feishu documents",
   "config": {
     "addonName": "Zotero Feishu Sync",
