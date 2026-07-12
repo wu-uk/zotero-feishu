@@ -6,4 +6,4 @@ pref-redirect-uri = OAuth redirect URI
 pref-authorize = Authorize
 pref-test = Test connection
 pref-logout = Clear authorization
-pref-help = Leave the target folder empty to use My Space. Add the redirect URI above to the Feishu app security settings. Enable docx:document, docs:document.media:upload, drive:file:upload, drive:drive.metadata:readonly, space:document:delete, and offline_access before publishing the app.
+pref-help = Leave the target folder empty to use My Space. Add the redirect URI above to the Feishu app security settings. Enable docx:document, docx:document.block:convert, docs:document.media:upload, drive:file:upload, drive:drive.metadata:readonly, space:document:delete, and offline_access before publishing the app.

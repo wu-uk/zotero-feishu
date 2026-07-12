@@ -20,6 +20,11 @@ export interface CreatedDocument {
   documentUrl: string;
 }
 
+interface ConvertedBlocks {
+  firstLevelBlockIds: string[];
+  descendants: any[];
+}
+
 export class FeishuClient {
   private documentReadyAt = 0;
   private mediaReadyAt = 0;
@@ -82,6 +87,13 @@ export class FeishuClient {
     resolveImage: (attachmentKey: string) => Promise<string>,
   ): Promise<string[]> {
     const errors: string[] = [];
+    const convertedSegments = new Map<RichBlock, ConvertedBlocks>();
+    for (const block of blocks) {
+      if (block.type === "html") {
+        convertedSegments.set(block, await this.convertHtml(block.content));
+      }
+    }
+
     const existing = await this.getRootChildren(documentId);
     if (existing.length) {
       await this.documentRateLimit();
@@ -100,6 +112,14 @@ export class FeishuClient {
     };
 
     for (const block of blocks) {
+      if (block.type === "html") {
+        await flush();
+        await this.appendConvertedBlocks(
+          documentId,
+          convertedSegments.get(block)!,
+        );
+        continue;
+      }
       if (block.type !== "image") {
         pending.push(toFeishuBlock(block));
         if (pending.length === 50) await flush();
@@ -177,6 +197,38 @@ export class FeishuClient {
       { index: -1, children },
     );
     return data.children || [];
+  }
+
+  private async convertHtml(content: string): Promise<ConvertedBlocks> {
+    const converted = await this.request(
+      "POST",
+      "/docx/v1/documents/blocks/convert",
+      { content_type: "html", content },
+    );
+    const firstLevelBlockIds = converted.first_level_block_ids || [];
+    const descendants = prepareConvertedBlocks(converted.blocks || []);
+    if (descendants.length > 1000) {
+      throw new Error("A converted note segment exceeds 1000 Feishu blocks");
+    }
+    return { firstLevelBlockIds, descendants };
+  }
+
+  private async appendConvertedBlocks(
+    documentId: string,
+    converted: ConvertedBlocks,
+  ): Promise<void> {
+    const { firstLevelBlockIds, descendants } = converted;
+    if (!firstLevelBlockIds.length || !descendants.length) return;
+    await this.documentRateLimit();
+    await this.request(
+      "POST",
+      `/docx/v1/documents/${documentId}/blocks/${documentId}/descendant?document_revision_id=-1`,
+      {
+        index: -1,
+        children_id: firstLevelBlockIds,
+        descendants,
+      },
+    );
   }
 
   private async uploadImage(
@@ -350,13 +402,18 @@ function mediaForm(
   return form;
 }
 
-function toFeishuBlock(block: Exclude<RichBlock, { type: "image" }>): any {
+function toFeishuBlock(
+  block: Exclude<RichBlock, { type: "html" } | { type: "image" }>,
+): any {
   if (block.type === "divider") return { block_type: 22, divider: {} };
   const mapping: Record<string, [number, string]> = {
     paragraph: [2, "text"],
     heading1: [3, "heading1"],
     heading2: [4, "heading2"],
     heading3: [5, "heading3"],
+    heading4: [6, "heading4"],
+    heading5: [7, "heading5"],
+    heading6: [8, "heading6"],
     bullet: [12, "bullet"],
     ordered: [13, "ordered"],
     code: [14, "code"],
@@ -367,6 +424,16 @@ function toFeishuBlock(block: Exclude<RichBlock, { type: "image" }>): any {
     block_type: blockType,
     [property]: { elements: block.runs.map(toTextElement), style: {} },
   };
+}
+
+export function prepareConvertedBlocks(blocks: any[]): any[] {
+  return blocks.map((source) => {
+    const block = JSON.parse(JSON.stringify(source));
+    if (block.block_type === 31 && block.table?.property) {
+      delete block.table.property.merge_info;
+    }
+    return block;
+  });
 }
 
 function toTextElement(run: TextRun): any {

@@ -10,6 +10,7 @@ const AUTHORIZE_URL =
 const TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
 const SCOPES = [
   "docx:document",
+  "docx:document.block:convert",
   "docs:document.media:upload",
   "drive:file:upload",
   "drive:drive.metadata:readonly",

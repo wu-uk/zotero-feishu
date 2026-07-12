@@ -1,5 +1,7 @@
 import type { DocumentModel, RichBlock, TextRun, TextStyle } from "./types";
 
+const DOCUMENT_SCHEMA_VERSION = 2;
+
 interface SourceData {
   key: string;
   title: string;
@@ -130,12 +132,61 @@ export function noteHtmlToBlocks(html: string): RichBlock[] {
   const blocks: RichBlock[] = [];
   const body = document.body;
   if (!body) return [{ type: "paragraph", runs: [{ text: "(Empty note)" }] }];
-  Array.from(body.childNodes).forEach((node) => {
-    if (node) appendBlockNode(node, blocks);
+  const root = noteContentRoot(body);
+  let convertibleHtml = "";
+  const flushConvertibleHtml = () => {
+    if (convertibleHtml.trim()) {
+      blocks.push({ type: "html", content: convertibleHtml });
+    }
+    convertibleHtml = "";
+  };
+  Array.from(root.childNodes).forEach((node) => {
+    if (!node || !meaningfulNode(node)) return;
+    if (containsImage(node)) {
+      flushConvertibleHtml();
+      appendBlockNode(node, blocks);
+      return;
+    }
+    convertibleHtml += serializeNode(node);
   });
+  flushConvertibleHtml();
   return blocks.length
     ? blocks
     : [{ type: "paragraph", runs: [{ text: "(Empty note)" }] }];
+}
+
+function noteContentRoot(body: HTMLElement): HTMLElement {
+  const children = Array.from(body.children);
+  if (
+    children.length === 1 &&
+    children[0].tagName.toLowerCase() === "div" &&
+    children[0].hasAttribute("data-schema-version")
+  ) {
+    return children[0] as HTMLElement;
+  }
+  return body;
+}
+
+function meaningfulNode(node: Node): boolean {
+  return node.nodeType === 1 || Boolean(node.textContent?.trim());
+}
+
+function containsImage(node: Node): boolean {
+  if (node.nodeType !== 1) return false;
+  const element = node as Element;
+  return element.matches("img") || Boolean(element.querySelector("img"));
+}
+
+function serializeNode(node: Node): string {
+  if (node.nodeType === 1) return String((node as Element).outerHTML);
+  return `<p>${escapeHtml(node.textContent || "")}</p>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>]/g,
+    (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]!,
+  );
 }
 
 function appendBlockNode(node: Node, blocks: RichBlock[]): void {
@@ -147,6 +198,12 @@ function appendBlockNode(node: Node, blocks: RichBlock[]): void {
   if (node.nodeType !== 1) return;
   const element = node as Element;
   const tag = element.tagName.toLowerCase();
+  if (tag === "div" || tag === "section" || tag === "article") {
+    Array.from(element.childNodes).forEach((child) => {
+      if (child) appendBlockNode(child, blocks);
+    });
+    return;
+  }
   if (tag === "hr") {
     blocks.push({ type: "divider" });
     return;
@@ -166,15 +223,21 @@ function appendBlockNode(node: Node, blocks: RichBlock[]): void {
         ? "heading2"
         : tag === "h3"
           ? "heading3"
-          : tag === "blockquote"
-            ? "quote"
-            : tag === "pre"
-              ? "code"
-              : "paragraph";
+          : tag === "h4"
+            ? "heading4"
+            : tag === "h5"
+              ? "heading5"
+              : tag === "h6"
+                ? "heading6"
+                : tag === "blockquote"
+                  ? "quote"
+                  : tag === "pre"
+                    ? "code"
+                    : "paragraph";
   appendInlineBlock(element, type as TextBlockType, blocks);
 }
 
-type TextBlockType = Exclude<RichBlock["type"], "divider" | "image">;
+type TextBlockType = Exclude<RichBlock["type"], "divider" | "html" | "image">;
 
 function appendInlineBlock(
   element: Element,
@@ -251,7 +314,9 @@ function numberAttribute(element: Element, name: string): number | undefined {
 
 async function hashSource(source: SourceData): Promise<string> {
   const win = Zotero.getMainWindow() as any;
-  const bytes = new win.TextEncoder().encode(JSON.stringify(source));
+  const bytes = new win.TextEncoder().encode(
+    JSON.stringify({ schemaVersion: DOCUMENT_SCHEMA_VERSION, source }),
+  );
   const digest = new Uint8Array(
     await win.crypto.subtle.digest("SHA-256", bytes),
   );

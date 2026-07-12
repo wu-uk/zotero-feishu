@@ -41,6 +41,9 @@ export type RichBlock =
         | "heading1"
         | "heading2"
         | "heading3"
+        | "heading4"
+        | "heading5"
+        | "heading6"
         | "bullet"
         | "ordered"
         | "quote"
@@ -48,6 +51,7 @@ export type RichBlock =
       runs: TextRun[];
     }
   | { type: "divider" }
+  | { type: "html"; content: string }
   | {
       type: "image";
       attachmentKey: string;

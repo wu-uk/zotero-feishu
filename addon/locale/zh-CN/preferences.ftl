@@ -6,4 +6,4 @@ pref-redirect-uri = OAuth 重定向地址
 pref-authorize = 授权飞书账号
 pref-test = 测试连接
 pref-logout = 清除授权
-pref-help = 目标文件夹留空时使用“我的空间”根目录。请将上方重定向地址添加到飞书应用安全设置，并在发布应用前开通 docx:document、docs:document.media:upload、drive:file:upload、drive:drive.metadata:readonly、space:document:delete 和 offline_access 权限。
+pref-help = 目标文件夹留空时使用“我的空间”根目录。请将上方重定向地址添加到飞书应用安全设置，并在发布应用前开通 docx:document、docx:document.block:convert、docs:document.media:upload、drive:file:upload、drive:drive.metadata:readonly、space:document:delete 和 offline_access 权限。

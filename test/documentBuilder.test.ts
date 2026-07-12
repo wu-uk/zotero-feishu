@@ -1,6 +1,9 @@
 import { assert } from "chai";
 import { noteHtmlToBlocks } from "../src/modules/documentBuilder";
-import { parseFolderToken } from "../src/modules/feishuClient";
+import {
+  parseFolderToken,
+  prepareConvertedBlocks,
+} from "../src/modules/feishuClient";
 
 describe("Zotero Feishu Sync helpers", function () {
   it("preserves common rich text and embedded image order", function () {
@@ -20,14 +23,37 @@ describe("Zotero Feishu Sync helpers", function () {
     assert.equal((blocks[2] as any).runs[0].text, "after");
   });
 
-  it("flattens lists into ordered block types", function () {
+  it("keeps top-level Zotero images on the local upload path", function () {
     const blocks = noteHtmlToBlocks(
-      "<ul><li>One</li><li>Two</li></ul><ol><li>Three</li></ol>",
+      '<img data-attachment-key="TOP123" alt="top-level">',
     );
-    assert.deepEqual(
-      blocks.map((block) => block.type),
-      ["bullet", "bullet", "ordered"],
+    assert.equal(blocks[0].type, "image");
+    assert.equal((blocks[0] as any).attachmentKey, "TOP123");
+  });
+
+  it("keeps Markdown-equivalent HTML for native Feishu conversion", function () {
+    const blocks = noteHtmlToBlocks(
+      '<div data-schema-version="9"><h3>Section</h3><ul><li>One<ul><li>Nested</li></ul></li></ul><pre><code>const n = 1;</code></pre><table><tbody><tr><td>A</td><td>B</td></tr></tbody></table></div>',
     );
+    assert.lengthOf(blocks, 1);
+    assert.equal(blocks[0].type, "html");
+    const content = (blocks[0] as any).content;
+    assert.include(content, "<h3>Section</h3>");
+    assert.include(content, "<ul><li>One<ul><li>Nested</li></ul></li></ul>");
+    assert.include(content, "<pre><code>const n = 1;</code></pre>");
+    assert.include(content, "<table>");
+  });
+
+  it("removes read-only table merge metadata before insertion", function () {
+    const source = [
+      {
+        block_type: 31,
+        table: { property: { row_size: 2, merge_info: [{ row_span: 2 }] } },
+      },
+    ];
+    const [prepared] = prepareConvertedBlocks(source);
+    assert.notProperty(prepared.table.property, "merge_info");
+    assert.property(source[0].table.property, "merge_info");
   });
 
   it("accepts raw tokens and folder URLs", function () {

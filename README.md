@@ -10,7 +10,8 @@ managed Feishu document content.
 - Sync selected items, their selected child notes or attachments, or the direct
   items in the current Zotero collection.
 - Create one Feishu Docx per regular item in a configured folder.
-- Preserve common note formatting and upload embedded note images.
+- Preserve Markdown-equivalent note structure, including headings, lists,
+  quotes, code blocks, task lists, and tables, and upload embedded note images.
 - Skip unchanged items using a local source hash.
 - Open or explicitly delete a linked Feishu document.
 
@@ -23,7 +24,8 @@ notes, group libraries, attachments, or edits made in Feishu.
 1. Create a dedicated Feishu custom app.
 2. Add this redirect URL under the app's security settings:
    `http://127.0.0.1:23119/zotero-feishu/oauth/callback`.
-3. Enable `docx:document`, `docs:document.media:upload`,
+3. Enable `docx:document`, `docx:document.block:convert`,
+   `docs:document.media:upload`,
    `drive:file:upload`, `drive:drive.metadata:readonly`,
    `space:document:delete`, and `offline_access`.
 4. Publish the app and ensure your account is in its availability range.
