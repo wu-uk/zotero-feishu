@@ -1,4 +1,4 @@
-import { initLocale } from "./utils/locale";
+import { getLocaleID, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { registerMenus } from "./modules/menu";
 
@@ -39,7 +39,6 @@ async function onStartup() {
     label: addon.data.config.addonName,
     image: `chrome://${addon.data.config.addonRef}/content/icons/favicon.png`,
   });
-  addon.sync.register();
   addon.syncStatus.register();
 
   await Promise.all(
@@ -75,7 +74,33 @@ function onShutdown(): void {
 }
 
 async function onPrefsEvent(type: string, data: { window: Window }) {
-  if (type === "load") await registerPrefsScripts(data.window);
+  if (type !== "load") return;
+  try {
+    await registerPrefsScripts(data.window);
+  } catch (error) {
+    addon.data.prefs = { window: data.window, error };
+    const document = data.window.document;
+    const container = document.getElementById(
+      "zotero-feishu-connection-status",
+    );
+    const title = document.getElementById("zotero-feishu-status-title");
+    const detail = document.getElementById("zotero-feishu-status-detail");
+    if (container) container.setAttribute("data-state", "error");
+    if (title) {
+      const localization = (document as any).l10n;
+      title.textContent = localization?.formatValue
+        ? await localization.formatValue(
+            getLocaleID("pref-status-initialization-failed"),
+          )
+        : "Unable to initialize Feishu settings";
+    }
+    if (detail) detail.textContent = errorMessage(error);
+    ztoolkit.log("Unable to initialize Feishu settings", error);
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export default {

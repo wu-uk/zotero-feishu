@@ -51,6 +51,11 @@ export class CredentialStore {
     await this.set(APP_SECRET_USER, secret);
   }
 
+  clearAppSecret(): void {
+    const login = this.find(APP_SECRET_USER);
+    if (login) this.loginManager.removeLogin(login);
+  }
+
   getTokens(): OAuthTokens | undefined {
     const raw = this.find(TOKENS_USER)?.password;
     if (!raw) return undefined;

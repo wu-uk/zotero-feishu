@@ -1,4 +1,5 @@
 import { assert } from "chai";
+import { FeishuClient } from "../src/modules/feishuClient";
 import type { OAuthService } from "../src/modules/oauthService";
 import { FeishuError, FeishuTransport } from "../src/modules/feishu/transport";
 
@@ -64,11 +65,41 @@ describe("Feishu transport", function () {
     assert.equal((caught as FeishuError).status, 403);
     assert.equal((caught as FeishuError).code, 99991679);
   });
+
+  it("loads the current user's display name", async function () {
+    let receivedUrl = "";
+    Zotero.HTTP.request = (async (_method, url) => {
+      receivedUrl = url;
+      return {
+        status: 200,
+        response: {
+          code: 0,
+          data: { name: "Example User", open_id: "ou_example" },
+        },
+      } as any;
+    }) as typeof Zotero.HTTP.request;
+
+    const user = await new FeishuClient(
+      createOAuth("user-token"),
+    ).getCurrentUser();
+
+    assert.equal(
+      receivedUrl,
+      "https://open.feishu.cn/open-apis/authen/v1/user_info",
+    );
+    assert.deepEqual(user, {
+      name: "Example User",
+      openId: "ou_example",
+    });
+  });
 });
 
 function createTransport(accessToken: string): FeishuTransport {
-  const oauth = {
+  return new FeishuTransport(createOAuth(accessToken));
+}
+
+function createOAuth(accessToken: string): OAuthService {
+  return {
     getAccessToken: async () => accessToken,
   } as OAuthService;
-  return new FeishuTransport(oauth);
 }

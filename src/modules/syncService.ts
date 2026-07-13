@@ -3,7 +3,7 @@ import { buildDocument } from "./documentBuilder";
 import { FeishuClient, FeishuError } from "./feishuClient";
 import { OAuthService } from "./oauthService";
 import { StateStore } from "./stateStore";
-import type { SyncResult } from "./types";
+import type { FeishuUser, SyncResult } from "./types";
 
 export type ProgressCallback = (
   completed: number,
@@ -16,12 +16,8 @@ export class SyncService {
   readonly state = new StateStore();
   readonly client = new FeishuClient(this.oauth);
 
-  register(): void {
-    this.oauth.registerCallback();
-  }
-
   unregister(): void {
-    this.oauth.unregisterCallback();
+    this.oauth.cancelPendingAuthorization();
   }
 
   async syncItems(
@@ -119,6 +115,10 @@ export class SyncService {
 
   async testConnection(): Promise<void> {
     await this.client.testConnection(configuredFolder());
+  }
+
+  async getCurrentUser(): Promise<FeishuUser> {
+    return this.client.getCurrentUser();
   }
 }
 

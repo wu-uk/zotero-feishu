@@ -6,6 +6,11 @@ export interface OAuthTokens {
   scope: string;
 }
 
+export interface FeishuUser {
+  name: string;
+  openId: string;
+}
+
 export interface SyncRecord {
   libraryID: number;
   itemKey: string;

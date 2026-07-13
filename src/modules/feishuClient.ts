@@ -1,4 +1,4 @@
-import type { CalloutBlock, RichBlock } from "./types";
+import type { CalloutBlock, FeishuUser, RichBlock } from "./types";
 import { OAuthService } from "./oauthService";
 import {
   createdFileBlockId,
@@ -30,6 +30,14 @@ export class FeishuClient {
   constructor(oauth: OAuthService) {
     this.transport = new FeishuTransport(oauth);
     this.media = new FeishuMediaUploader(this.transport);
+  }
+
+  async getCurrentUser(): Promise<FeishuUser> {
+    const data = await this.transport.request("GET", "/authen/v1/user_info");
+    const name = String(data.name || data.en_name || data.open_id || "");
+    const openId = String(data.open_id || "");
+    if (!name) throw new Error("Feishu did not return the current user");
+    return { name, openId };
   }
 
   async testConnection(folderToken: string): Promise<void> {

@@ -1,40 +1,63 @@
 <linkset>
   <html:link rel="localization" href="__addonRef__-preferences.ftl" />
-  <html:link rel="stylesheet" href="preferences.css" />
+  <html:link
+    id="zotero-feishu-preferences-style"
+    rel="stylesheet"
+    href="chrome://__addonRef__/content/preferences.css"
+  />
 </linkset>
 <groupbox
   class="zotero-feishu-preferences"
   onload="Zotero.__addonInstance__.hooks.onPrefsEvent('load', { window })"
 >
-  <label><html:h2 data-l10n-id="pref-title"></html:h2></label>
-  <html:div class="settings-grid">
-    <html:label for="zotero-feishu-app-id" data-l10n-id="pref-app-id" />
-    <html:input id="zotero-feishu-app-id" type="text" />
-
-    <html:label for="zotero-feishu-app-secret" data-l10n-id="pref-app-secret" />
-    <html:input
-      id="zotero-feishu-app-secret"
-      type="password"
-      autocomplete="new-password"
+  <html:section
+    class="settings-section connection-section"
+    aria-labelledby="zotero-feishu-account-heading"
+  >
+    <html:h3
+      id="zotero-feishu-account-heading"
+      data-l10n-id="pref-account-title"
     />
+    <html:div
+      id="zotero-feishu-connection-status"
+      class="connection-status"
+      data-state="neutral"
+      aria-live="polite"
+    >
+      <html:div class="status-copy">
+        <html:div class="status-line">
+          <html:span
+            id="zotero-feishu-status-title"
+            data-l10n-id="pref-status-not-connected"
+          />
+          <html:button
+            id="zotero-feishu-connection-action"
+            class="connection-action"
+            data-l10n-id="pref-connect"
+          />
+        </html:div>
+        <html:p id="zotero-feishu-status-detail" hidden="true" />
+      </html:div>
+    </html:div>
+  </html:section>
 
-    <html:label
-      for="zotero-feishu-target-folder"
-      data-l10n-id="pref-target-folder"
-    />
-    <html:input id="zotero-feishu-target-folder" type="text" />
-
-    <html:label
-      for="zotero-feishu-redirect-uri"
-      data-l10n-id="pref-redirect-uri"
-    />
-    <html:input id="zotero-feishu-redirect-uri" type="text" readonly="true" />
-  </html:div>
-  <html:div class="settings-actions">
-    <html:button id="zotero-feishu-authorize" data-l10n-id="pref-authorize" />
-    <html:button id="zotero-feishu-test" data-l10n-id="pref-test" />
-    <html:button id="zotero-feishu-logout" data-l10n-id="pref-logout" />
-    <html:span id="zotero-feishu-status" role="status" />
-  </html:div>
-  <html:p class="settings-help" data-l10n-id="pref-help" />
+  <html:section
+    class="settings-section"
+    aria-labelledby="zotero-feishu-target-heading"
+  >
+    <html:div class="section-heading">
+      <html:h3
+        id="zotero-feishu-target-heading"
+        data-l10n-id="pref-target-title"
+      />
+      <html:span id="zotero-feishu-target-help-placeholder" />
+    </html:div>
+    <html:div class="settings-field">
+      <html:label
+        for="zotero-feishu-target-folder"
+        data-l10n-id="pref-target-folder"
+      />
+      <html:input id="zotero-feishu-target-folder" type="text" />
+    </html:div>
+  </html:section>
 </groupbox>
