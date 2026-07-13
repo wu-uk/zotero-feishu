@@ -1,6 +1,6 @@
 import { getLocaleID, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
-import { registerMenus } from "./modules/menu";
+import { registerMenus, unregisterMenus } from "./modules/menu";
 
 const preferencePaneID = "zotero-feishu-preferences";
 
@@ -57,13 +57,13 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   addon.syncStatus.unregisterWindow(win);
-  ztoolkit.unregisterAll();
 }
 
 function onShutdown(): void {
   unregisterPreferencePane();
   addon.sync.unregister();
   addon.syncStatus.unregister();
+  unregisterMenus();
   for (const win of Zotero.getMainWindows()) {
     addon.syncStatus.unregisterWindow(win);
   }

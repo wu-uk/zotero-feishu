@@ -1,12 +1,104 @@
-import { getString } from "../utils/locale";
+import { getLocaleID, getString } from "../utils/locale";
 import { uniqueRegularUserItems } from "./syncService";
 import type { SyncResult } from "./types";
 
+const ITEM_MENU_ID = "zotero-feishu-item-menu";
+const COLLECTION_MENU_ID = "zotero-feishu-collection-menu";
+
 export function registerMenus(win: _ZoteroTypes.MainWindow): void {
+  const menuManager = (Zotero as any).MenuManager as
+    | _ZoteroTypes.MenuManager
+    | undefined;
+  if (menuManager?.registerMenu) {
+    registerOfficialMenus();
+    return;
+  }
+  registerLegacyMenus(win);
+}
+
+export function unregisterMenus(): void {
+  for (const menuID of addon.data.menuIDs || []) {
+    Zotero.MenuManager?.unregisterMenu(menuID);
+  }
+  addon.data.menuIDs = [];
+}
+
+function registerOfficialMenus(): void {
+  if (addon.data.menuIDs?.length) return;
+  const icon = `chrome://${addon.data.config.addonRef}/content/icons/favicon@0.5x.png`;
+  Zotero.MenuManager.unregisterMenu(ITEM_MENU_ID);
+  Zotero.MenuManager.unregisterMenu(COLLECTION_MENU_ID);
+
+  const itemMenu = Zotero.MenuManager.registerMenu({
+    menuID: ITEM_MENU_ID,
+    pluginID: addon.data.config.addonID,
+    target: "main/library/item",
+    menus: [
+      {
+        menuType: "submenu",
+        l10nID: getLocaleID("menu-root"),
+        icon,
+        onShowing: (_event, context) => {
+          context.setVisible(
+            Boolean(uniqueRegularUserItems(context.items || []).length),
+          );
+        },
+        menus: [
+          {
+            menuType: "menuitem",
+            l10nID: getLocaleID("menu-sync-selected"),
+            onCommand: (_event, context) => void syncItems(context.items || []),
+          },
+          {
+            menuType: "menuitem",
+            l10nID: getLocaleID("menu-open-document"),
+            onCommand: (_event, context) =>
+              void openSelected(menuWindow(context), context.items || []),
+          },
+          { menuType: "separator" },
+          {
+            menuType: "menuitem",
+            l10nID: getLocaleID("menu-delete-document"),
+            onCommand: (_event, context) =>
+              void deleteSelected(menuWindow(context), context.items || []),
+          },
+        ],
+      },
+    ],
+  });
+  const collectionMenu = Zotero.MenuManager.registerMenu({
+    menuID: COLLECTION_MENU_ID,
+    pluginID: addon.data.config.addonID,
+    target: "main/library/collection",
+    menus: [
+      {
+        menuType: "menuitem",
+        l10nID: getLocaleID("menu-sync-collection"),
+        icon,
+        onShowing: (_event, context) => {
+          context.setVisible(Boolean(selectedCollection(context)));
+        },
+        onCommand: (_event, context) => {
+          const collection = selectedCollection(context);
+          if (collection) void syncItems(collection.getChildItems());
+        },
+      },
+    ],
+  });
+
+  if (!itemMenu || !collectionMenu) {
+    if (itemMenu) Zotero.MenuManager.unregisterMenu(itemMenu);
+    if (collectionMenu) Zotero.MenuManager.unregisterMenu(collectionMenu);
+    throw new Error("Unable to register Feishu menus");
+  }
+  addon.data.menuIDs = [itemMenu, collectionMenu];
+}
+
+function registerLegacyMenus(win: _ZoteroTypes.MainWindow): void {
   const icon = `chrome://${addon.data.config.addonRef}/content/icons/favicon@0.5x.png`;
   ztoolkit.Menu.register("item", {
     tag: "menu",
-    id: "zotero-feishu-item-menu",
+    id: ITEM_MENU_ID,
     label: getString("menu-root"),
     icon,
     children: [
@@ -18,13 +110,13 @@ export function registerMenus(win: _ZoteroTypes.MainWindow): void {
       {
         tag: "menuitem",
         label: getString("menu-open-document"),
-        commandListener: () => void openSelected(win),
+        commandListener: () => void openSelected(win, selectedItems()),
       },
       { tag: "menuseparator" },
       {
         tag: "menuitem",
         label: getString("menu-delete-document"),
-        commandListener: () => void deleteSelected(win),
+        commandListener: () => void deleteSelected(win, selectedItems()),
       },
     ],
   });
@@ -41,6 +133,24 @@ export function registerMenus(win: _ZoteroTypes.MainWindow): void {
       if (collection) void syncItems(collection.getChildItems());
     },
   });
+}
+
+function menuWindow(context: { menuElem: XULElement }): Window {
+  return (
+    (context.menuElem.ownerDocument?.defaultView as Window | null) ||
+    Zotero.getMainWindow()
+  );
+}
+
+function selectedCollection(context: {
+  collectionTreeRow?: any;
+}): Zotero.Collection | undefined {
+  const row = context.collectionTreeRow as Zotero.CollectionTreeRow | undefined;
+  if (!row?.isCollection()) return undefined;
+  const collection = row.ref as Zotero.Collection;
+  return collection.libraryID === Zotero.Libraries.userLibraryID
+    ? collection
+    : undefined;
 }
 
 function selectedItems(): Zotero.Item[] {
@@ -101,15 +211,18 @@ function showErrorDialog(results: SyncResult[]): void {
     });
 }
 
-async function openSelected(win: Window): Promise<void> {
-  const [item, ...rest] = selectedItems();
+async function openSelected(win: Window, items: Zotero.Item[]): Promise<void> {
+  const [item, ...rest] = items;
   if (!item || rest.length || !(await addon.sync.openItem(item))) {
     win.alert(getString("error-select-one-mapped"));
   }
 }
 
-async function deleteSelected(win: Window): Promise<void> {
-  const [item, ...rest] = selectedItems();
+async function deleteSelected(
+  win: Window,
+  items: Zotero.Item[],
+): Promise<void> {
+  const [item, ...rest] = items;
   if (!item || rest.length) {
     win.alert(getString("error-select-one-mapped"));
     return;

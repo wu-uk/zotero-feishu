@@ -1,5 +1,10 @@
 menu-root = Feishu Sync
+    .label = Feishu Sync
 menu-sync-selected = Sync selected items
+    .label = Sync selected items
 menu-sync-collection = Sync current collection to Feishu
+    .label = Sync current collection to Feishu
 menu-open-document = Open Feishu document
+    .label = Open Feishu document
 menu-delete-document = Delete Feishu document
+    .label = Delete Feishu document

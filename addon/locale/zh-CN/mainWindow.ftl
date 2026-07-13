@@ -1,5 +1,10 @@
 menu-root = 飞书同步
+    .label = 飞书同步
 menu-sync-selected = 同步选中文献
+    .label = 同步选中文献
 menu-sync-collection = 同步当前分类到飞书
+    .label = 同步当前分类到飞书
 menu-open-document = 打开飞书文档
+    .label = 打开飞书文档
 menu-delete-document = 删除飞书文档
+    .label = 删除飞书文档
