@@ -1,9 +1,19 @@
 import { getPref } from "../utils/prefs";
 import { buildDocument } from "./documentBuilder";
-import { FeishuClient, FeishuError } from "./feishuClient";
+import {
+  FeishuClient,
+  FeishuError,
+  type CreatedDocument,
+} from "./feishuClient";
 import { OAuthService } from "./oauthService";
 import { StateStore } from "./stateStore";
-import type { FeishuUser, SyncResult } from "./types";
+import type {
+  DocumentModel,
+  FeishuUser,
+  RichBlock,
+  SyncRecord,
+  SyncResult,
+} from "./types";
 
 export type ProgressCallback = (
   completed: number,
@@ -11,10 +21,47 @@ export type ProgressCallback = (
   result: SyncResult,
 ) => void;
 
+export interface SyncStateRepository {
+  get(libraryID: number, itemKey: string): Promise<SyncRecord | undefined>;
+  set(record: SyncRecord): Promise<void>;
+  delete(libraryID: number, itemKey: string): Promise<void>;
+}
+
+export interface SyncClient {
+  getCurrentUser(): Promise<FeishuUser>;
+  testConnection(folderToken: string): Promise<void>;
+  createDocument(title: string, folderToken: string): Promise<CreatedDocument>;
+  documentExists(documentId: string): Promise<boolean>;
+  replaceDocument(
+    documentId: string,
+    blocks: RichBlock[],
+    resolveAttachment: (attachmentKey: string) => Promise<string>,
+  ): Promise<string[]>;
+  deleteDocument(documentId: string): Promise<void>;
+}
+
+export interface SyncServiceDependencies {
+  oauth?: OAuthService;
+  state?: SyncStateRepository;
+  client?: SyncClient;
+  buildDocument?: (item: Zotero.Item) => Promise<DocumentModel>;
+}
+
 export class SyncService {
-  readonly oauth = new OAuthService();
-  readonly state = new StateStore();
-  readonly client = new FeishuClient(this.oauth);
+  readonly oauth: OAuthService;
+  readonly state: SyncStateRepository;
+  readonly client: SyncClient;
+  private readonly documentBuilder: (
+    item: Zotero.Item,
+  ) => Promise<DocumentModel>;
+  private readonly itemOperations = new Map<string, Promise<void>>();
+
+  constructor(dependencies: SyncServiceDependencies = {}) {
+    this.oauth = dependencies.oauth || new OAuthService();
+    this.state = dependencies.state || new StateStore();
+    this.client = dependencies.client || new FeishuClient(this.oauth);
+    this.documentBuilder = dependencies.buildDocument || buildDocument;
+  }
 
   unregister(): void {
     this.oauth.cancelPendingAuthorization();
@@ -35,6 +82,10 @@ export class SyncService {
   }
 
   async syncItem(item: Zotero.Item): Promise<SyncResult> {
+    return this.withItemOperation(item, () => this.performSyncItem(item));
+  }
+
+  private async performSyncItem(item: Zotero.Item): Promise<SyncResult> {
     const title = String(item.getField("title") || "Untitled");
     const base: SyncResult = {
       libraryID: item.libraryID,
@@ -46,8 +97,11 @@ export class SyncService {
     try {
       assertSupportedItem(item);
       const folder = configuredFolder();
-      const model = await buildDocument(item);
+      const model = await this.documentBuilder(item);
       let record = await this.state.get(item.libraryID, item.key);
+      if (record && !(await this.client.documentExists(record.documentId))) {
+        record = undefined;
+      }
       if (record?.sourceHash === model.sourceHash) {
         return {
           ...base,
@@ -57,9 +111,6 @@ export class SyncService {
       }
 
       let created = false;
-      if (record && !(await this.client.documentExists(record.documentId))) {
-        record = undefined;
-      }
       if (!record) {
         const document = await this.client.createDocument(model.title, folder);
         created = true;
@@ -95,6 +146,10 @@ export class SyncService {
   }
 
   async deleteItem(item: Zotero.Item): Promise<boolean> {
+    return this.withItemOperation(item, () => this.performDeleteItem(item));
+  }
+
+  private async performDeleteItem(item: Zotero.Item): Promise<boolean> {
     const record = await this.state.get(item.libraryID, item.key);
     if (!record) return false;
     try {
@@ -104,6 +159,27 @@ export class SyncService {
     }
     await this.state.delete(item.libraryID, item.key);
     return true;
+  }
+
+  private async withItemOperation<T>(
+    item: Zotero.Item,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = `${item.libraryID}:${item.key}`;
+    const previous = this.itemOperations.get(key) || Promise.resolve();
+    const current = previous.then(operation);
+    const tail = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.itemOperations.set(key, tail);
+    try {
+      return await current;
+    } finally {
+      if (this.itemOperations.get(key) === tail) {
+        this.itemOperations.delete(key);
+      }
+    }
   }
 
   async openItem(item: Zotero.Item): Promise<boolean> {
