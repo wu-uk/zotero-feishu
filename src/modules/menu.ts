@@ -5,25 +5,7 @@ import type { SyncResult } from "./types";
 const ITEM_MENU_ID = "zotero-feishu-item-menu";
 const COLLECTION_MENU_ID = "zotero-feishu-collection-menu";
 
-export function registerMenus(win: _ZoteroTypes.MainWindow): void {
-  const menuManager = (Zotero as any).MenuManager as
-    | _ZoteroTypes.MenuManager
-    | undefined;
-  if (menuManager?.registerMenu) {
-    registerOfficialMenus();
-    return;
-  }
-  registerLegacyMenus(win);
-}
-
-export function unregisterMenus(): void {
-  for (const menuID of addon.data.menuIDs || []) {
-    Zotero.MenuManager?.unregisterMenu(menuID);
-  }
-  addon.data.menuIDs = [];
-}
-
-function registerOfficialMenus(): void {
+export function registerMenus(): void {
   if (addon.data.menuIDs?.length) return;
   const icon = `chrome://${addon.data.config.addonRef}/content/icons/favicon@0.5x.png`;
   Zotero.MenuManager.unregisterMenu(ITEM_MENU_ID);
@@ -94,45 +76,11 @@ function registerOfficialMenus(): void {
   addon.data.menuIDs = [itemMenu, collectionMenu];
 }
 
-function registerLegacyMenus(win: _ZoteroTypes.MainWindow): void {
-  const icon = `chrome://${addon.data.config.addonRef}/content/icons/favicon@0.5x.png`;
-  ztoolkit.Menu.register("item", {
-    tag: "menu",
-    id: ITEM_MENU_ID,
-    label: getString("menu-root"),
-    icon,
-    children: [
-      {
-        tag: "menuitem",
-        label: getString("menu-sync-selected"),
-        commandListener: () => void syncItems(selectedItems()),
-      },
-      {
-        tag: "menuitem",
-        label: getString("menu-open-document"),
-        commandListener: () => void openSelected(win, selectedItems()),
-      },
-      { tag: "menuseparator" },
-      {
-        tag: "menuitem",
-        label: getString("menu-delete-document"),
-        commandListener: () => void deleteSelected(win, selectedItems()),
-      },
-    ],
-  });
-
-  ztoolkit.Menu.register("collection" as any, {
-    tag: "menuitem",
-    id: "zotero-feishu-collection-sync",
-    label: getString("menu-sync-collection"),
-    icon,
-    commandListener: () => {
-      const collection = ztoolkit
-        .getGlobal("ZoteroPane")
-        .getSelectedCollection();
-      if (collection) void syncItems(collection.getChildItems());
-    },
-  });
+export function unregisterMenus(): void {
+  for (const menuID of addon.data.menuIDs || []) {
+    Zotero.MenuManager.unregisterMenu(menuID);
+  }
+  addon.data.menuIDs = [];
 }
 
 function menuWindow(context: { menuElem: XULElement }): Window {
@@ -151,10 +99,6 @@ function selectedCollection(context: {
   return collection.libraryID === Zotero.Libraries.userLibraryID
     ? collection
     : undefined;
-}
-
-function selectedItems(): Zotero.Item[] {
-  return ztoolkit.getGlobal("ZoteroPane").getSelectedItems();
 }
 
 async function syncItems(items: Zotero.Item[]): Promise<void> {

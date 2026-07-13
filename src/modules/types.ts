@@ -89,11 +89,7 @@ export interface DocumentModel {
 }
 
 export type SyncOutcome =
-  | "created"
-  | "updated"
-  | "unchanged"
-  | "partial"
-  | "failed";
+  "created" | "updated" | "unchanged" | "partial" | "failed";
 
 export interface SyncResult {
   libraryID: number;

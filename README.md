@@ -9,7 +9,7 @@ plugin-managed content in its mapped Feishu document.
 
 ## Requirements
 
-- Zotero 7-9. Release validation is performed on Zotero 9.
+- Zotero 8-9. Release validation is performed on Zotero 9.
 - A mainland Feishu account that can create a personal application and grant
   the requested permissions. Tenant policy may require administrator approval.
 - Local PDF and note-image files must be available to Zotero when synchronizing.
