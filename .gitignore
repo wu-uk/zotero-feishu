@@ -14,3 +14,8 @@ tsconfig.tsbuildinfo
 .scaffold
 build
 logs
+
+# Local agent and test artifacts
+.agents
+skills-lock.json
+tmp

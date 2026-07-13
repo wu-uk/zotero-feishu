@@ -14,7 +14,7 @@ export default defineConfig({
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
   build: {
-    assets: ["addon/**/*.*", "THIRD_PARTY_NOTICES.md"],
+    assets: ["addon/**/*.*", "LICENSE", "THIRD_PARTY_NOTICES.md"],
     define: {
       ...pkg.config,
       author: pkg.author,

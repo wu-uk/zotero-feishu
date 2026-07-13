@@ -1,41 +1,73 @@
 # Zotero Feishu Sync
 
-Zotero Feishu Sync is a Zotero 7-9 plugin that publishes literature metadata,
-abstracts, child notes, and embedded note images to Feishu cloud documents.
-Zotero remains the source of truth; syncing an existing item replaces the
-managed Feishu document content.
+[简体中文](doc/README-zhCN.md)
 
-## Current Scope
+Zotero Feishu Sync is an unofficial Zotero plugin that publishes literature
+metadata, notes, images, and PDF attachments to Feishu cloud documents. Zotero
+remains the source of truth: synchronizing an existing item replaces the
+plugin-managed content in its mapped Feishu document.
 
-- Sync selected items, their selected child notes or attachments, or the direct
-  items in the current Zotero collection.
-- Create one Feishu Docx per regular item in a configured folder.
-- Preserve Markdown-equivalent note structure, including headings, lists,
-  quotes, code blocks, task lists, and tables, and upload embedded note images.
-- Append local PDF attachments to the end of each synchronized document.
-- Present literature metadata in a native Feishu callout for faster scanning.
-- Show per-item syncing, success, and failure indicators in the Zotero item tree.
-- Skip unchanged items using a local source hash.
-- Open or explicitly delete a linked Feishu document.
+## Requirements
 
-The initial release supports My Library and mainland Feishu only. It does not
-sync PDF annotations that have not been added to a Zotero note, standalone
-notes, group libraries, attachments, or edits made in Feishu.
+- Zotero 7-9. Release validation is performed on Zotero 9.
+- A mainland Feishu account that can create a personal application and grant
+  the requested permissions. Tenant policy may require administrator approval.
+- Local PDF and note-image files must be available to Zotero when synchronizing.
 
-## Feishu Setup
+## Installation
 
-1. Open the plugin preferences and click **Connect Feishu**.
-2. Confirm creation of a dedicated local app in the browser.
-3. If Feishu opens the app permission page, enable the listed permissions and
-   complete any publishing or administrator approval required by your tenant.
+1. Download `zotero-feishu-sync.xpi` from the latest GitHub Release.
+2. In Zotero, open **Tools → Plugins**.
+3. Choose **Install Add-on From File**, select the XPI, and restart Zotero if
+   requested.
+
+## Connect Feishu
+
+1. Open **Zotero Settings → Zotero Feishu Sync** and select **Connect Feishu**.
+2. Confirm creation of the dedicated personal application in the browser.
+3. If the Feishu permission console opens, enable the listed permissions and
+   complete any required app publication or administrator approval.
 4. Complete account authorization in the browser and return to Zotero.
 
-Leave the destination folder empty to use My Space, or enter a Drive folder
-URL. No App ID, App Secret, or OAuth redirect URL needs to be configured.
+No App ID, App Secret, or redirect URL needs to be entered manually. Leave the
+target folder empty to use the root of My Space, or enter a Feishu Drive folder
+URL or token.
 
-Secrets and OAuth tokens are stored in Zotero's Firefox Login Manager. The
-local item-to-document mapping is stored under the Zotero profile and is not
-synced between computers.
+## Usage
+
+- Right-click a regular Zotero item, child note, or child attachment and choose
+  **Feishu Sync → Sync selected items**.
+- Right-click a collection and choose **Sync current collection to Feishu**.
+- Use the same item menu to open or explicitly delete its mapped document.
+- Check the Feishu status column for syncing, success, or failure details.
+
+Each regular item maps to one Feishu Docx. Unchanged sources are skipped after
+the mapped document is verified. Child notes retain Markdown-equivalent
+structure, embedded note images are uploaded, and local child PDFs are appended
+to the document.
+
+## Limitations
+
+- Only My Library and mainland Feishu are currently supported.
+- Standalone notes and standalone attachments are not synchronized. Selecting a
+  child note or attachment synchronizes its regular parent item.
+- PDF annotations must first be added to a Zotero note.
+- Feishu edits are not imported into Zotero and may be replaced by the next
+  synchronization.
+- Item mappings are local to the Zotero profile. Losing the mapping can create a
+  second Feishu document for the same item.
+
+## Privacy And Removal
+
+Literature content is sent directly from Zotero to Feishu; the plugin does not
+use a developer-operated relay server. App credentials and OAuth tokens are
+stored in Zotero's Firefox Login Manager. Item mappings are stored in
+`<Zotero profile>/zotero-feishu/state.json`.
+
+Disconnecting removes the OAuth tokens but retains the generated application
+credentials for a later reconnect. Uninstalling the plugin does not delete the
+personal application or synchronized documents from Feishu; remove them from
+the Feishu Open Platform and Drive when they are no longer needed.
 
 ## Development
 
@@ -47,11 +79,11 @@ npm run build
 npm test
 ```
 
-Copy `.env.example` to `.env` and configure a dedicated Zotero development
-profile before running `npm start` or the Zotero-hosted tests. Production
-packages are written to `.scaffold/build/`.
+Copy `.env.example` to `.env` and use a dedicated Zotero development profile.
+Production packages and update manifests are written to `.scaffold/build/`.
 
 ## License
 
 AGPL-3.0-or-later. See `THIRD_PARTY_NOTICES.md` for incorporated third-party
-software notices.
+software notices. Feishu and its logo are trademarks of their respective owner;
+this project is not affiliated with or endorsed by Feishu.
