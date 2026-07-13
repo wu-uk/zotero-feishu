@@ -65,6 +65,11 @@ export type RichBlock =
   | { type: "divider" }
   | { type: "html"; content: string }
   | {
+      type: "file";
+      attachmentKey: string;
+      name: string;
+    }
+  | {
       type: "image";
       attachmentKey: string;
       alt: string;

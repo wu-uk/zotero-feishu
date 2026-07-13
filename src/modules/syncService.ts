@@ -81,9 +81,9 @@ export class SyncService {
       const errors = await this.client.replaceDocument(
         record.documentId,
         model.blocks,
-        (key) => resolveEmbeddedImage(item.libraryID, key),
+        (key) => resolveAttachment(item.libraryID, key),
       );
-      record.sourceHash = model.sourceHash;
+      record.sourceHash = errors.length ? "" : model.sourceHash;
       record.lastSyncedAt = new Date().toISOString();
       await this.state.set(record);
       return {
@@ -149,12 +149,12 @@ function configuredFolder(): string {
   return String(getPref("targetFolder") || "").trim();
 }
 
-async function resolveEmbeddedImage(
+async function resolveAttachment(
   libraryID: number,
   attachmentKey: string,
 ): Promise<string> {
   if (!attachmentKey)
-    throw new Error("Zotero note image has no attachment key");
+    throw new Error("Zotero attachment has no attachment key");
   const attachment = Zotero.Items.getByLibraryAndKey(libraryID, attachmentKey);
   if (!attachment || !attachment.isAttachment()) {
     throw new Error(`Zotero attachment ${attachmentKey} was not found`);

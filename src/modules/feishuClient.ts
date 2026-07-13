@@ -5,6 +5,8 @@ const API = "https://open.feishu.cn/open-apis";
 const SIMPLE_UPLOAD_LIMIT = 20 * 1024 * 1024;
 const PART_SIZE = 4 * 1024 * 1024;
 
+type MediaKind = "file" | "image";
+
 export class FeishuError extends Error {
   constructor(
     message: string,
@@ -84,7 +86,7 @@ export class FeishuClient {
   async replaceDocument(
     documentId: string,
     blocks: RichBlock[],
-    resolveImage: (attachmentKey: string) => Promise<string>,
+    resolveAttachment: (attachmentKey: string) => Promise<string>,
   ): Promise<string[]> {
     const errors: string[] = [];
     const convertedSegments = new Map<RichBlock, ConvertedBlocks>();
@@ -118,23 +120,34 @@ export class FeishuClient {
         await this.appendCallout(documentId, block);
         continue;
       }
-      if (block.type !== "image") {
+      if (block.type !== "image" && block.type !== "file") {
         pending.push(toFeishuBlock(block));
         if (pending.length === 50) await flush();
         continue;
       }
       await flush();
       try {
-        const path = await resolveImage(block.attachmentKey);
-        const [created] = await this.appendBlocks(documentId, [
-          { block_type: 27, image: {} },
+        const path = await resolveAttachment(block.attachmentKey);
+        const kind: MediaKind = block.type;
+        const created = await this.appendBlocks(documentId, [
+          kind === "image"
+            ? { block_type: 27, image: {} }
+            : { block_type: 23, file: { token: "" } },
         ]);
-        const blockId = created?.block_id;
+        const blockId =
+          kind === "image"
+            ? String(created[0]?.block_id || "")
+            : createdFileBlockId(created);
         if (!blockId)
-          throw new Error("Feishu did not return an image block ID");
-        await this.uploadImage(documentId, blockId, path);
+          throw new Error(`Feishu did not return a ${kind} block ID`);
+        await this.uploadMedia(documentId, blockId, path, kind);
       } catch (error) {
-        const message = `Image ${block.alt || block.attachmentKey}: ${errorMessage(error)}`;
+        const label = block.type === "image" ? "Image" : "PDF";
+        const name =
+          block.type === "image"
+            ? block.alt || block.attachmentKey
+            : block.name || block.attachmentKey;
+        const message = `${label} ${name}: ${errorMessage(error)}`;
         errors.push(message);
         await this.appendBlocks(documentId, [
           toFeishuBlock({
@@ -264,18 +277,21 @@ export class FeishuClient {
     );
   }
 
-  private async uploadImage(
+  private async uploadMedia(
     documentId: string,
     blockId: string,
     path: string,
+    kind: MediaKind,
   ): Promise<void> {
     const ioUtils = ztoolkit.getGlobal("IOUtils") as any;
-    const bytes = (await ioUtils.read(path)) as Uint8Array;
     const pathUtils = ztoolkit.getGlobal("PathUtils") as any;
-    const name = pathUtils.filename(path);
+    const name = safeMediaFileName(pathUtils.filename(path));
+    const size = Number((await ioUtils.stat(path)).size);
+    const parentType = kind === "image" ? "docx_image" : "docx_file";
     let uploaded: any;
-    if (bytes.byteLength <= SIMPLE_UPLOAD_LIMIT) {
-      const form = mediaForm(name, blockId, documentId, bytes);
+    if (size <= SIMPLE_UPLOAD_LIMIT) {
+      const bytes = (await ioUtils.read(path)) as Uint8Array;
+      const form = mediaForm(name, blockId, documentId, parentType, bytes);
       uploaded = await this.mediaRequest("/drive/v1/medias/upload_all", form);
     } else {
       const prepared = await this.request(
@@ -283,22 +299,24 @@ export class FeishuClient {
         "/drive/v1/medias/upload_prepare",
         {
           file_name: name,
-          parent_type: "docx_image",
+          parent_type: parentType,
           parent_node: blockId,
-          size: bytes.byteLength,
+          size,
           extra: JSON.stringify({ drive_route_token: documentId }),
         },
       );
       const uploadId = prepared.upload_id;
+      if (!uploadId) throw new Error("Feishu did not return an upload ID");
       const blockSize = Number(prepared.block_size || PART_SIZE);
       const blockNum = Number(
-        prepared.block_num || Math.ceil(bytes.length / blockSize),
+        prepared.block_num || Math.ceil(size / blockSize),
       );
       for (let seq = 0; seq < blockNum; seq++) {
-        const part = bytes.slice(
-          seq * blockSize,
-          Math.min((seq + 1) * blockSize, bytes.length),
-        );
+        const offset = seq * blockSize;
+        const part = (await ioUtils.read(path, {
+          offset,
+          maxBytes: Math.min(blockSize, size - offset),
+        })) as Uint8Array;
         const win = Zotero.getMainWindow() as any;
         const formData = new win.FormData();
         formData.append("upload_id", uploadId);
@@ -306,7 +324,7 @@ export class FeishuClient {
         formData.append("size", String(part.byteLength));
         formData.append(
           "file",
-          new win.Blob([part], { type: imageMimeType(name) }),
+          new win.Blob([part], { type: mediaMimeType(name) }),
           name,
         );
         await this.mediaRequest("/drive/v1/medias/upload_part", formData);
@@ -321,7 +339,9 @@ export class FeishuClient {
     await this.request(
       "PATCH",
       `/docx/v1/documents/${documentId}/blocks/${blockId}?document_revision_id=-1`,
-      { replace_image: { token: fileToken } },
+      kind === "image"
+        ? { replace_image: { token: fileToken } }
+        : { replace_file: { token: fileToken } },
     );
   }
 
@@ -433,18 +453,19 @@ function mediaForm(
   name: string,
   blockId: string,
   documentId: string,
+  parentType: "docx_file" | "docx_image",
   bytes: Uint8Array,
 ): FormData {
   const win = Zotero.getMainWindow() as any;
   const form = new win.FormData();
   form.append("file_name", name);
-  form.append("parent_type", "docx_image");
+  form.append("parent_type", parentType);
   form.append("parent_node", blockId);
   form.append("size", String(bytes.byteLength));
   form.append("extra", JSON.stringify({ drive_route_token: documentId }));
   form.append(
     "file",
-    new win.Blob([bytes], { type: imageMimeType(name) }),
+    new win.Blob([bytes], { type: mediaMimeType(name) }),
     name,
   );
   return form;
@@ -452,11 +473,33 @@ function mediaForm(
 
 export function requireMediaFileToken(data: any): string {
   const token = String(data?.file_token || "");
-  if (!token) throw new Error("Feishu did not return an image file token");
+  if (!token) throw new Error("Feishu did not return a media file token");
   return token;
 }
 
-function imageMimeType(name: string): string {
+export function createdFileBlockId(blocks: any[]): string {
+  const file = blocks.find(
+    (block) => block?.block_type === 23 && block.block_id,
+  );
+  if (file) return String(file.block_id);
+
+  const view = blocks.find((block) => block?.block_type === 33);
+  const child = view?.children?.[0];
+  if (typeof child === "string" && child) return child;
+  if (child && typeof child === "object") {
+    return createdFileBlockId([child]);
+  }
+  throw new Error("Feishu did not return a file block ID");
+}
+
+function safeMediaFileName(name: string): string {
+  if (name.length <= 250) return name;
+  const dot = name.lastIndexOf(".");
+  const extension = dot > 0 ? name.slice(dot) : "";
+  return `${name.slice(0, 250 - extension.length)}${extension}`;
+}
+
+function mediaMimeType(name: string): string {
   const extension = name.split(".").pop()?.toLowerCase();
   return (
     {
@@ -466,6 +509,7 @@ function imageMimeType(name: string): string {
       jpeg: "image/jpeg",
       jpg: "image/jpeg",
       png: "image/png",
+      pdf: "application/pdf",
       svg: "image/svg+xml",
       webp: "image/webp",
     }[extension || ""] || "application/octet-stream"

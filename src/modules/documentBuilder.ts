@@ -6,7 +6,14 @@ import type {
   TextStyle,
 } from "./types";
 
-const DOCUMENT_SCHEMA_VERSION = 8;
+const DOCUMENT_SCHEMA_VERSION = 9;
+
+interface PdfAttachmentSource {
+  key: string;
+  name: string;
+  size: number;
+  modifiedAt: number;
+}
 
 interface SourceData {
   key: string;
@@ -20,10 +27,11 @@ interface SourceData {
   abstract: string;
   tags: string[];
   notes: Array<{ title: string; html: string }>;
+  pdfs: PdfAttachmentSource[];
 }
 
 export async function buildDocument(item: Zotero.Item): Promise<DocumentModel> {
-  const source = collectSource(item);
+  const source = await collectSource(item);
   const sourceHash = await hashSource(source);
   const blocks: RichBlock[] = [
     {
@@ -70,6 +78,10 @@ export async function buildDocument(item: Zotero.Item): Promise<DocumentModel> {
     blocks.push(...noteHtmlToBlocks(note.html));
   });
 
+  if (source.pdfs.length) {
+    blocks.push(...pdfAttachmentsToBlocks(source.pdfs));
+  }
+
   return {
     title: `[${source.year || "n.d."}] ${source.title || "Untitled"}`,
     blocks,
@@ -77,7 +89,21 @@ export async function buildDocument(item: Zotero.Item): Promise<DocumentModel> {
   };
 }
 
-function collectSource(item: Zotero.Item): SourceData {
+export function pdfAttachmentsToBlocks(
+  pdfs: Array<Pick<PdfAttachmentSource, "key" | "name">>,
+): RichBlock[] {
+  if (!pdfs.length) return [];
+  return [
+    { type: "heading1", runs: [{ text: "PDF Attachments" }] },
+    ...pdfs.map((pdf) => ({
+      type: "file" as const,
+      attachmentKey: pdf.key,
+      name: pdf.name,
+    })),
+  ];
+}
+
+async function collectSource(item: Zotero.Item): Promise<SourceData> {
   const notes = item.getNotes().map((id: number, index: number) => {
     const note = Zotero.Items.get(id);
     const html = note?.getNote() || "";
@@ -96,6 +122,7 @@ function collectSource(item: Zotero.Item): SourceData {
     lastName?: string;
     name?: string;
   }>;
+  const pdfs = await collectPdfAttachments(item);
   return {
     key: item.key,
     title: field(item, "title"),
@@ -115,7 +142,47 @@ function collectSource(item: Zotero.Item): SourceData {
     abstract: field(item, "abstractNote"),
     tags: item.getTags().map((tag: { tag: string }) => tag.tag),
     notes,
+    pdfs,
   };
+}
+
+async function collectPdfAttachments(
+  item: Zotero.Item,
+): Promise<PdfAttachmentSource[]> {
+  const ioUtils = ztoolkit.getGlobal("IOUtils") as any;
+  const attachments = item
+    .getAttachments()
+    .map((id) => Zotero.Items.get(id))
+    .filter((attachment): attachment is Zotero.Item =>
+      Boolean(attachment?.isPDFAttachment()),
+    );
+
+  return Promise.all(
+    attachments.map(async (attachment) => {
+      const path = await attachment.getFilePathAsync();
+      let size = 0;
+      let modifiedAt = 0;
+      try {
+        if (path) size = Number((await ioUtils.stat(path)).size || 0);
+        modifiedAt = Number((await attachment.attachmentModificationTime) || 0);
+      } catch (error) {
+        ztoolkit.log(
+          "Unable to read Zotero PDF attachment metadata",
+          attachment.key,
+          error,
+        );
+      }
+      return {
+        key: attachment.key,
+        name:
+          attachment.attachmentFilename ||
+          attachment.getDisplayTitle() ||
+          `${attachment.key}.pdf`,
+        size,
+        modifiedAt,
+      };
+    }),
+  );
 }
 
 function field(item: Zotero.Item, name: string): string {
