@@ -27,12 +27,19 @@ describe("startup", function () {
     );
   });
 
-  it("registers Feishu menus through the official menu manager", function () {
-    const plugin = Zotero[config.addonInstance] as any;
-    assert.lengthOf(plugin.data.menuIDs, 2);
-    assert.match(plugin.data.menuIDs[0], /zotero-feishu-item-menu$/);
-    assert.match(plugin.data.menuIDs[1], /zotero-feishu-collection-menu$/);
-    assert.notEqual(plugin.data.menuIDs[0], plugin.data.menuIDs[1]);
+  it("renders a native Feishu item submenu and icon", function () {
+    const win = Zotero.getMainWindow();
+    const menu = win.document.getElementById(
+      "zotero-feishu-item-menu",
+    ) as XULMenuElement | null;
+    assert.exists(menu);
+    assert.isTrue(menu!.classList.contains("menu-iconic"));
+    assert.include(menu!.getAttribute("image") || "", "favicon@0.5x.png");
+    assert.lengthOf(menu!.querySelectorAll(":scope > menupopup > menuitem"), 3);
+    assert.lengthOf(
+      menu!.querySelectorAll(":scope > menupopup > menuseparator"),
+      1,
+    );
   });
 
   it("loads the versioned item-tree stylesheet", function () {

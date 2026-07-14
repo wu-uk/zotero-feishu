@@ -16,7 +16,6 @@ class Addon {
       current: any;
     };
     preferencePaneID?: string;
-    menuIDs?: string[];
     prefs?: { window: Window; error?: unknown };
   };
   // Lifecycle hooks

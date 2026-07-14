@@ -51,11 +51,12 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   win.MozXULElement.insertFTLIfNeeded(
     `${addon.data.config.addonRef}-mainWindow.ftl`,
   );
-  registerMenus();
+  registerMenus(win);
   addon.syncStatus.registerWindow(win);
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
+  unregisterMenus(win);
   addon.syncStatus.unregisterWindow(win);
 }
 

@@ -1,104 +1,157 @@
-import { getLocaleID, getString } from "../utils/locale";
+import { getString } from "../utils/locale";
 import { uniqueRegularUserItems } from "./syncService";
 import type { SyncResult } from "./types";
 
 const ITEM_MENU_ID = "zotero-feishu-item-menu";
+const ITEM_SEPARATOR_ID = "zotero-feishu-item-menu-separator";
 const COLLECTION_MENU_ID = "zotero-feishu-collection-menu";
+const COLLECTION_SEPARATOR_ID = "zotero-feishu-collection-menu-separator";
+const menuCleanups = new Map<Window, () => void>();
+type MenuLocaleKey =
+  | "menu-root"
+  | "menu-sync-selected"
+  | "menu-sync-collection"
+  | "menu-open-document"
+  | "menu-delete-document";
 
-export function registerMenus(): void {
-  if (addon.data.menuIDs?.length) return;
-  const icon = `chrome://${addon.data.config.addonRef}/content/icons/favicon@0.5x.png`;
-  Zotero.MenuManager.unregisterMenu(ITEM_MENU_ID);
-  Zotero.MenuManager.unregisterMenu(COLLECTION_MENU_ID);
-
-  const itemMenu = Zotero.MenuManager.registerMenu({
-    menuID: ITEM_MENU_ID,
-    pluginID: addon.data.config.addonID,
-    target: "main/library/item",
-    menus: [
-      {
-        menuType: "submenu",
-        l10nID: getLocaleID("menu-root"),
-        icon,
-        onShowing: (_event, context) => {
-          context.setVisible(
-            Boolean(uniqueRegularUserItems(context.items || []).length),
-          );
-        },
-        menus: [
-          {
-            menuType: "menuitem",
-            l10nID: getLocaleID("menu-sync-selected"),
-            onCommand: (_event, context) => void syncItems(context.items || []),
-          },
-          {
-            menuType: "menuitem",
-            l10nID: getLocaleID("menu-open-document"),
-            onCommand: (_event, context) =>
-              void openSelected(menuWindow(context), context.items || []),
-          },
-          { menuType: "separator" },
-          {
-            menuType: "menuitem",
-            l10nID: getLocaleID("menu-delete-document"),
-            onCommand: (_event, context) =>
-              void deleteSelected(menuWindow(context), context.items || []),
-          },
-        ],
-      },
-    ],
-  });
-  const collectionMenu = Zotero.MenuManager.registerMenu({
-    menuID: COLLECTION_MENU_ID,
-    pluginID: addon.data.config.addonID,
-    target: "main/library/collection",
-    menus: [
-      {
-        menuType: "menuitem",
-        l10nID: getLocaleID("menu-sync-collection"),
-        icon,
-        onShowing: (_event, context) => {
-          context.setVisible(Boolean(selectedCollection(context)));
-        },
-        onCommand: (_event, context) => {
-          const collection = selectedCollection(context);
-          if (collection) void syncItems(collection.getChildItems());
-        },
-      },
-    ],
-  });
-
-  if (!itemMenu || !collectionMenu) {
-    if (itemMenu) Zotero.MenuManager.unregisterMenu(itemMenu);
-    if (collectionMenu) Zotero.MenuManager.unregisterMenu(collectionMenu);
-    throw new Error("Unable to register Feishu menus");
+export function registerMenus(win: _ZoteroTypes.MainWindow): void {
+  unregisterMenus(win);
+  const document = win.document;
+  const itemPopup = document.getElementById(
+    "zotero-itemmenu",
+  ) as XULPopupElement | null;
+  const collectionPopup = document.getElementById(
+    "zotero-collectionmenu",
+  ) as XULPopupElement | null;
+  if (!itemPopup || !collectionPopup) {
+    throw new Error("Unable to find Zotero library menus");
   }
-  addon.data.menuIDs = [itemMenu, collectionMenu];
-}
 
-export function unregisterMenus(): void {
-  for (const menuID of addon.data.menuIDs || []) {
-    Zotero.MenuManager.unregisterMenu(menuID);
-  }
-  addon.data.menuIDs = [];
-}
-
-function menuWindow(context: { menuElem: XULElement }): Window {
-  return (
-    (context.menuElem.ownerDocument?.defaultView as Window | null) ||
-    Zotero.getMainWindow()
+  const icon = `${rootURI}content/icons/favicon@0.5x.png`;
+  const itemSeparator = createSeparator(document, ITEM_SEPARATOR_ID);
+  const itemMenu = createItemMenu(win, icon);
+  const collectionSeparator = createSeparator(
+    document,
+    COLLECTION_SEPARATOR_ID,
   );
+  const collectionMenu = createCollectionMenu(win, icon);
+
+  const updateItemMenu = (event: Event) => {
+    if (event.target !== itemPopup) return;
+    const visible = Boolean(uniqueRegularUserItems(selectedItems(win)).length);
+    itemMenu.hidden = !visible;
+    itemSeparator.hidden = !visible;
+  };
+  const updateCollectionMenu = (event: Event) => {
+    if (event.target !== collectionPopup) return;
+    const visible = Boolean(selectedCollection(win));
+    collectionMenu.hidden = !visible;
+    collectionSeparator.hidden = !visible;
+  };
+
+  itemPopup.addEventListener("popupshowing", updateItemMenu);
+  collectionPopup.addEventListener("popupshowing", updateCollectionMenu);
+  itemPopup.append(itemSeparator, itemMenu);
+  collectionPopup.append(collectionSeparator, collectionMenu);
+
+  menuCleanups.set(win, () => {
+    itemPopup.removeEventListener("popupshowing", updateItemMenu);
+    collectionPopup.removeEventListener("popupshowing", updateCollectionMenu);
+    itemSeparator.remove();
+    itemMenu.remove();
+    collectionSeparator.remove();
+    collectionMenu.remove();
+  });
 }
 
-function selectedCollection(context: {
-  collectionTreeRow?: any;
-}): Zotero.Collection | undefined {
-  const row = context.collectionTreeRow as Zotero.CollectionTreeRow | undefined;
-  if (!row?.isCollection()) return undefined;
-  const collection = row.ref as Zotero.Collection;
+export function unregisterMenus(win?: Window): void {
+  if (win) {
+    menuCleanups.get(win)?.();
+    menuCleanups.delete(win);
+    removeStaleMenuElements(win.document);
+    return;
+  }
+  for (const menuWindow of [...menuCleanups.keys()]) {
+    unregisterMenus(menuWindow);
+  }
+}
+
+function createItemMenu(win: Window, icon: string): XULMenuElement {
+  const document = win.document;
+  const menu = document.createXULElement("menu") as XULMenuElement;
+  menu.id = ITEM_MENU_ID;
+  menu.classList.add("menu-iconic");
+  menu.setAttribute("label", getString("menu-root"));
+  menu.setAttribute("image", icon);
+
+  const popup = document.createXULElement("menupopup") as XULPopupElement;
+  popup.append(
+    createMenuItem(document, "menu-sync-selected", () => {
+      void syncItems(selectedItems(win));
+    }),
+    createMenuItem(document, "menu-open-document", () => {
+      void openSelected(win, selectedItems(win));
+    }),
+    document.createXULElement("menuseparator"),
+    createMenuItem(document, "menu-delete-document", () => {
+      void deleteSelected(win, selectedItems(win));
+    }),
+  );
+  menu.appendChild(popup);
+  return menu;
+}
+
+function createCollectionMenu(win: Window, icon: string): XULElement {
+  const menu = createMenuItem(win.document, "menu-sync-collection", () => {
+    const collection = selectedCollection(win);
+    if (collection) void syncItems(collection.getChildItems());
+  });
+  menu.id = COLLECTION_MENU_ID;
+  menu.classList.add("menuitem-iconic");
+  menu.setAttribute("image", icon);
+  return menu;
+}
+
+function createMenuItem(
+  document: Document,
+  localeKey: MenuLocaleKey,
+  command: () => void,
+): XULElement {
+  const item = document.createXULElement("menuitem") as XULElement;
+  item.setAttribute("label", getString(localeKey));
+  item.addEventListener("command", command);
+  return item;
+}
+
+function createSeparator(document: Document, id: string): XULElement {
+  const separator = document.createXULElement("menuseparator") as XULElement;
+  separator.id = id;
+  return separator;
+}
+
+function selectedItems(win: Window): Zotero.Item[] {
+  return (win as _ZoteroTypes.MainWindow).ZoteroPane.getSelectedItems();
+}
+
+function selectedCollection(win: Window): Zotero.Collection | undefined {
+  const collection = (
+    win as _ZoteroTypes.MainWindow
+  ).ZoteroPane.getSelectedCollection();
+  if (!collection) return undefined;
   return collection.libraryID === Zotero.Libraries.userLibraryID
     ? collection
     : undefined;
+}
+
+function removeStaleMenuElements(document: Document): void {
+  for (const id of [
+    ITEM_MENU_ID,
+    ITEM_SEPARATOR_ID,
+    COLLECTION_MENU_ID,
+    COLLECTION_SEPARATOR_ID,
+  ]) {
+    document.getElementById(id)?.remove();
+  }
 }
 
 async function syncItems(items: Zotero.Item[]): Promise<void> {
