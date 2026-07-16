@@ -5,6 +5,7 @@ import type {
   TextBlock,
   TextRun,
 } from "./types";
+import { hashValue } from "../utils/hash";
 import { noteHtmlToFragments, type NoteFragment } from "./zotero/noteConverter";
 import {
   collectSource,
@@ -12,7 +13,8 @@ import {
   type SourceData,
 } from "./zotero/sourceCollector";
 
-const DOCUMENT_SCHEMA_VERSION = 15;
+const DOCUMENT_SCHEMA_VERSION = 16;
+const NOTE_FRAGMENT_SCHEMA_VERSION = 2;
 
 export { noteHtmlToBlocks, noteHtmlToFragments } from "./zotero/noteConverter";
 
@@ -184,7 +186,7 @@ async function buildFragmentSections(
   const sourceHashes = await Promise.all(
     fragments.map((fragment) =>
       hashValue({
-        schemaVersion: DOCUMENT_SCHEMA_VERSION,
+        schemaVersion: NOTE_FRAGMENT_SCHEMA_VERSION,
         type: "note-fragment",
         blocks: fragment.blocks,
       }),
@@ -201,15 +203,4 @@ async function buildFragmentSections(
       blocks: fragment.blocks,
     };
   });
-}
-
-async function hashValue(value: unknown): Promise<string> {
-  const win = Zotero.getMainWindow() as any;
-  const bytes = new win.TextEncoder().encode(JSON.stringify(value));
-  const digest = new Uint8Array(
-    await win.crypto.subtle.digest("SHA-256", bytes),
-  );
-  return Array.from(digest)
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }

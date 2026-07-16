@@ -1,5 +1,6 @@
 import type {
   CalloutBlock,
+  EmbeddedImageSource,
   EquationSource,
   TextBlock,
   TextRun,
@@ -8,6 +9,12 @@ import type {
 export interface ConvertedBlocks {
   firstLevelBlockIds: string[];
   descendants: any[];
+  imageBlocks?: ConvertedImageBlock[];
+}
+
+export interface ConvertedImageBlock {
+  temporaryBlockId: string;
+  source: EmbeddedImageSource;
 }
 
 export function createdFileBlockId(blocks: any[]): string {
@@ -106,7 +113,95 @@ export function normalizeConvertedOrderedListItems(
     if (children.length) anchor.children = children;
   }
 
-  return { firstLevelBlockIds: normalizedRoots, descendants };
+  return { ...converted, firstLevelBlockIds: normalizedRoots, descendants };
+}
+
+export function replaceConvertedImageMarkers(
+  converted: ConvertedBlocks,
+  images: EmbeddedImageSource[],
+): ConvertedBlocks {
+  if (!images.length) return converted;
+  const sources = new Map(images.map((image) => [image.marker, image]));
+  const replacements = new Map<string, any[]>();
+  const imageBlocks: ConvertedImageBlock[] = [];
+
+  for (const block of converted.descendants) {
+    const text = textBlockContent(block);
+    if (!text?.elements) continue;
+    const tokens = splitImageElements(text.elements, sources);
+    if (!tokens.some((token) => token.image)) continue;
+    const blockId = String(block.block_id || "");
+    if (!blockId) {
+      throw new Error("Converted Feishu block is missing its temporary ID");
+    }
+    const originalChildren = Array.isArray(block.children)
+      ? [...block.children]
+      : [];
+    if (block.block_type === 12 || block.block_type === 13) {
+      const [first, ...remaining] = tokens;
+      const children: string[] = [];
+      if (first?.elements) text.elements = first.elements;
+      else text.elements = [];
+      for (const token of first?.image ? tokens : remaining) {
+        const child = tokenBlock(block, token, imageBlocks, true);
+        children.push(child.block_id);
+        converted.descendants.push(child);
+      }
+      block.children = [...children, ...originalChildren];
+      continue;
+    }
+
+    const blocks = tokens.map((token) =>
+      tokenBlock(block, token, imageBlocks, false),
+    );
+    const childHost = [...blocks]
+      .reverse()
+      .find((candidate) => candidate.block_type !== 27);
+    if (originalChildren.length) {
+      if (!childHost) {
+        const host = cloneTextBlock(block, temporaryBlockId(), []);
+        blocks.push(host);
+      }
+      const resolvedHost = childHost || blocks[blocks.length - 1];
+      resolvedHost.children = originalChildren;
+    }
+    replacements.set(blockId, blocks);
+  }
+
+  if (!replacements.size && !imageBlocks.length) {
+    throw new Error(
+      "Feishu conversion did not preserve embedded image markers",
+    );
+  }
+  for (const block of converted.descendants) {
+    if (!Array.isArray(block.children)) continue;
+    block.children = block.children.flatMap((childId: string) => {
+      const children = replacements.get(childId);
+      return children ? children.map((child) => child.block_id) : childId;
+    });
+  }
+  const firstLevelBlockIds = converted.firstLevelBlockIds.flatMap((blockId) => {
+    const roots = replacements.get(blockId);
+    return roots ? roots.map((root) => root.block_id) : blockId;
+  });
+  const replacedIds = new Set(replacements.keys());
+  const descendants = converted.descendants.filter(
+    (block) => !replacedIds.has(String(block.block_id || "")),
+  );
+  for (const blocks of replacements.values()) descendants.push(...blocks);
+  const matchedMarkers = new Set(
+    imageBlocks.map((image) => image.source.marker),
+  );
+  const missing = images.find((image) => !matchedMarkers.has(image.marker));
+  if (missing) {
+    throw new Error(`Feishu conversion lost image marker ${missing.marker}`);
+  }
+  return {
+    ...converted,
+    firstLevelBlockIds,
+    descendants,
+    imageBlocks,
+  };
 }
 
 export function restoreConvertedEquations(
@@ -174,6 +269,110 @@ function textBlockContent(block: any): any {
     if (block?.[property]?.elements) return block[property];
   }
   return undefined;
+}
+
+interface ImageElementToken {
+  elements?: any[];
+  image?: EmbeddedImageSource;
+}
+
+function splitImageElements(
+  elements: any[],
+  sources: Map<string, EmbeddedImageSource>,
+): ImageElementToken[] {
+  const tokens: ImageElementToken[] = [];
+  let current: any[] = [];
+  const flush = () => {
+    if (current.length) tokens.push({ elements: current });
+    current = [];
+  };
+  for (const element of elements) {
+    const textRun = element?.text_run;
+    const content = textRun?.content;
+    if (typeof content !== "string") {
+      current.push(element);
+      continue;
+    }
+    const marker = /__ZOTERO_FEISHU_IMAGE_\d+__/g;
+    let cursor = 0;
+    let matched = false;
+    for (const match of content.matchAll(marker)) {
+      const source = sources.get(match[0]);
+      if (!source) continue;
+      matched = true;
+      if (match.index > cursor) {
+        current.push({
+          text_run: {
+            ...textRun,
+            content: content.slice(cursor, match.index),
+          },
+        });
+      }
+      flush();
+      tokens.push({ image: source });
+      cursor = match.index + match[0].length;
+    }
+    if (!matched) {
+      current.push(element);
+      continue;
+    }
+    if (cursor < content.length) {
+      current.push({
+        text_run: { ...textRun, content: content.slice(cursor) },
+      });
+    }
+  }
+  flush();
+  return tokens;
+}
+
+function tokenBlock(
+  sourceBlock: any,
+  token: ImageElementToken,
+  imageBlocks: ConvertedImageBlock[],
+  listChild: boolean,
+): any {
+  const blockId = temporaryBlockId();
+  if (token.image) {
+    imageBlocks.push({
+      temporaryBlockId: blockId,
+      source: token.image,
+    });
+    return {
+      block_id: blockId,
+      block_type: 27,
+      image: {},
+      children: [],
+    };
+  }
+  const block = cloneTextBlock(sourceBlock, blockId, token.elements || []);
+  if (listChild) convertListCloneToText(block);
+  delete block.children;
+  return block;
+}
+
+function cloneTextBlock(
+  sourceBlock: any,
+  blockId: string,
+  elements: any[],
+): any {
+  const block = JSON.parse(JSON.stringify(sourceBlock));
+  block.block_id = blockId;
+  const text = textBlockContent(block);
+  if (text) text.elements = elements;
+  return block;
+}
+
+function convertListCloneToText(block: any): void {
+  if (block.block_type === 12) {
+    block.text = block.bullet;
+    delete block.bullet;
+  } else if (block.block_type === 13) {
+    block.text = block.ordered;
+    delete block.ordered;
+  }
+  block.block_type = 2;
+  if (block.text?.style) delete block.text.style.sequence;
 }
 
 interface RestoredEquationElements {

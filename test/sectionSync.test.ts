@@ -3,7 +3,7 @@ import { planSectionSync } from "../src/modules/feishu/sectionSync";
 import type { DocumentSection, SyncedSection } from "../src/modules/types";
 
 describe("section sync planning", function () {
-  it("replaces only changed sections", function () {
+  it("replaces only changed sections while preserving unknown roots", function () {
     const previous = [
       synced("metadata", "metadata-v1", ["metadata"]),
       synced("note:A", "note-a-v1", ["note-a-heading", "note-a-body"]),
@@ -18,93 +18,101 @@ describe("section sync planning", function () {
     assert.deepEqual(
       planSectionSync(
         [
+          "user-before",
           "metadata",
           "note-a-heading",
           "note-a-body",
+          "user-middle",
           "pdf-heading",
           "pdf-file",
+          "user-after",
         ],
         previous,
         desired,
+        remoteHashes(previous),
       ),
       {
-        mode: "incremental",
-        deletions: [{ startIndex: 1, endIndex: 3 }],
+        deletions: [previous[1]],
         retained: [previous[0], previous[2]],
       },
     );
   });
 
-  it("replaces a content-addressed note fragment between retained fragments", function () {
-    const previous = [
-      synced("note:A:fragment:alpha:1", "alpha", ["alpha-block"]),
-      synced("note:A:fragment:beta:1", "beta", ["beta-block"]),
-      synced("note:A:fragment:gamma:1", "gamma", ["gamma-block"]),
-    ];
-    const desired = [
-      section("note:A:fragment:alpha:1", "alpha"),
-      section("note:A:fragment:beta-v2:1", "beta-v2"),
-      section("note:A:fragment:gamma:1", "gamma"),
-    ];
-
+  it("repairs a section whose remote content changed", function () {
+    const previous = [synced("metadata", "metadata-v1", ["metadata"])];
     assert.deepEqual(
       planSectionSync(
-        ["alpha-block", "beta-block", "gamma-block"],
+        ["metadata"],
         previous,
-        desired,
+        [section("metadata", "metadata-v1")],
+        new Map([["metadata", "edited-remotely"]]),
       ),
       {
-        mode: "incremental",
-        deletions: [{ startIndex: 1, endIndex: 2 }],
-        retained: [previous[0], previous[2]],
+        deletions: previous,
+        retained: [],
       },
     );
   });
 
-  it("deletes removed sections from the end toward the start", function () {
+  it("repairs a section with a missing or interleaved block", function () {
     const previous = [
-      synced("metadata", "metadata-v1", ["metadata"]),
-      synced("note:A", "note-a-v1", ["note-a"]),
-      synced("note:B", "note-b-v1", ["note-b"]),
+      synced("note:A", "note-a-v1", ["note-heading", "note-body"]),
     ];
-
-    assert.deepEqual(
-      planSectionSync(["metadata", "note-a", "note-b"], previous, [
-        section("metadata", "metadata-v1"),
-      ]),
-      {
-        mode: "incremental",
-        deletions: [
-          { startIndex: 2, endIndex: 3 },
-          { startIndex: 1, endIndex: 2 },
-        ],
-        retained: [previous[0]],
-      },
-    );
-  });
-
-  it("rebuilds when stored block IDs no longer match the document", function () {
     assert.deepEqual(
       planSectionSync(
-        ["manually-replaced-block"],
-        [synced("metadata", "metadata-v1", ["metadata"])],
-        [section("metadata", "metadata-v2")],
+        ["note-heading", "user-block", "note-body"],
+        previous,
+        [section("note:A", "note-a-v1")],
+        remoteHashes(previous),
       ),
-      { mode: "rebuild" },
+      {
+        deletions: previous,
+        retained: [],
+      },
     );
   });
 
-  it("rebuilds when retained sections were reordered", function () {
+  it("uses an LIS anchor and rebuilds only one moved section", function () {
     const previous = [
       synced("note:A", "note-a-v1", ["note-a"]),
       synced("note:B", "note-b-v1", ["note-b"]),
+      synced("note:C", "note-c-v1", ["note-c"]),
     ];
-    assert.deepEqual(
-      planSectionSync(["note-a", "note-b"], previous, [
+    const plan = planSectionSync(
+      ["note-a", "note-b", "note-c"],
+      previous,
+      [
         section("note:B", "note-b-v1"),
         section("note:A", "note-a-v1"),
-      ]),
-      { mode: "rebuild" },
+        section("note:C", "note-c-v1"),
+      ],
+      remoteHashes(previous),
+    );
+
+    assert.lengthOf(plan.deletions, 1);
+    assert.lengthOf(plan.retained, 2);
+    assert.deepEqual(
+      [...plan.deletions, ...plan.retained].map((value) => value.key).sort(),
+      ["note:A", "note:B", "note:C"],
+    );
+  });
+
+  it("forces migrated sections without remote hashes through local repair", function () {
+    const migrated = {
+      ...synced("metadata", "metadata-v1", ["metadata"]),
+      remoteHash: "",
+    };
+    assert.deepEqual(
+      planSectionSync(
+        ["metadata", "user-block"],
+        [migrated],
+        [section("metadata", "metadata-v1")],
+        new Map([["metadata", "remote-metadata"]]),
+      ),
+      {
+        deletions: [migrated],
+        retained: [],
+      },
     );
   });
 });
@@ -122,5 +130,9 @@ function synced(
   sourceHash: string,
   blockIds: string[],
 ): SyncedSection {
-  return { key, sourceHash, blockIds };
+  return { key, sourceHash, remoteHash: `remote-${key}`, blockIds };
+}
+
+function remoteHashes(sections: SyncedSection[]): Map<string, string> {
+  return new Map(sections.map((section) => [section.key, section.remoteHash]));
 }

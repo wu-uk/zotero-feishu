@@ -21,7 +21,7 @@ export interface SyncRecord {
   itemKey: string;
   documentId: string;
   documentUrl: string;
-  documentTitle?: string;
+  documentTitle: string;
   sourceHash: string;
   lastSyncedAt: string;
   sections?: SyncedSection[];
@@ -36,8 +36,25 @@ export interface SyncState {
 export interface SyncedSection {
   key: string;
   sourceHash: string;
-  remoteHash?: string;
+  remoteHash: string;
   blockIds: string[];
+}
+
+export interface FeishuBlock {
+  block_id: string;
+  block_type: number;
+  parent_id?: string;
+  children?: string[];
+  comment_ids?: string[];
+  [property: string]: unknown;
+}
+
+export interface DocumentSnapshot {
+  documentId: string;
+  title: string;
+  revisionId: number;
+  rootBlockIds: string[];
+  blocks: FeishuBlock[];
 }
 
 export interface TextStyle {
@@ -57,6 +74,14 @@ export interface TextRun {
 export interface EquationSource {
   content: string;
   display: boolean;
+}
+
+export interface EmbeddedImageSource {
+  marker: string;
+  attachmentKey: string;
+  alt: string;
+  width?: number;
+  height?: number;
 }
 
 export interface TextBlock {
@@ -93,6 +118,7 @@ export type RichBlock =
       content: string;
       normalizeOrderedListItems?: boolean;
       equations?: EquationSource[];
+      images?: EmbeddedImageSource[];
     }
   | {
       type: "file";
@@ -123,6 +149,7 @@ export interface DocumentWriteResult {
   sections: SyncedSection[];
   errors: string[];
   rebuilt: boolean;
+  changed: boolean;
 }
 
 export type SyncOutcome =

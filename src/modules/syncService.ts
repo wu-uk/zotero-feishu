@@ -10,6 +10,7 @@ import { StateStore } from "./stateStore";
 import type {
   DocumentModel,
   DocumentSection,
+  DocumentSnapshot,
   DocumentWriteResult,
   FeishuUser,
   SyncRecord,
@@ -33,12 +34,15 @@ export interface SyncClient {
   getCurrentUser(): Promise<FeishuUser>;
   testConnection(folderToken: string): Promise<void>;
   createDocument(title: string, folderToken: string): Promise<CreatedDocument>;
-  documentExists(documentId: string): Promise<boolean>;
+  inspectDocument(documentId: string): Promise<DocumentSnapshot | undefined>;
+  updateDocumentTitle(documentId: string, title: string): Promise<void>;
   syncDocumentSections(
     documentId: string,
     sections: DocumentSection[],
     previous: SyncedSection[] | undefined,
     resolveAttachment: (attachmentKey: string) => Promise<string>,
+    checkpoint: (sections: SyncedSection[]) => Promise<void>,
+    initialSnapshot?: DocumentSnapshot,
   ): Promise<DocumentWriteResult>;
   deleteDocument(documentId: string): Promise<void>;
 }
@@ -85,7 +89,10 @@ export class SyncService {
   }
 
   async syncItem(item: Zotero.Item): Promise<SyncResult> {
-    return this.withItemOperation(item, () => this.performSyncItem(item));
+    const topLevelItem = resolveTopLevelItem(item);
+    return this.withItemOperation(topLevelItem, () =>
+      this.performSyncItem(topLevelItem),
+    );
   }
 
   private async performSyncItem(item: Zotero.Item): Promise<SyncResult> {
@@ -102,16 +109,10 @@ export class SyncService {
       const folder = configuredFolder();
       const model = await this.documentBuilder(item);
       let record = await this.state.get(item.libraryID, item.key);
-      if (record && !(await this.client.documentExists(record.documentId))) {
-        record = undefined;
-      }
-      if (record?.sourceHash === model.sourceHash) {
-        return {
-          ...base,
-          outcome: "unchanged",
-          documentUrl: record.documentUrl,
-        };
-      }
+      let snapshot = record
+        ? await this.client.inspectDocument(record.documentId)
+        : undefined;
+      if (record && !snapshot) record = undefined;
 
       let created = false;
       if (!record) {
@@ -122,21 +123,51 @@ export class SyncService {
           itemKey: item.key,
           documentId: document.documentId,
           documentUrl: document.documentUrl,
+          documentTitle: model.title,
           sourceHash: "",
           lastSyncedAt: "",
         };
         await this.state.set(record);
+        snapshot = await this.client.inspectDocument(record.documentId);
+        if (!snapshot) {
+          throw new Error("Feishu did not return the created document");
+        }
       }
+
+      const previousSourceHash = record.sourceHash;
+      const wasPending = Boolean(record.pendingSync);
+      record.pendingSync =
+        record.pendingSync?.targetSourceHash === model.sourceHash
+          ? record.pendingSync
+          : {
+              targetSourceHash: model.sourceHash,
+              startedAt: new Date().toISOString(),
+            };
+      await this.state.set(record);
+
+      let titleChanged = false;
+      if (snapshot!.title !== model.title) {
+        await this.client.updateDocumentTitle(record.documentId, model.title);
+        titleChanged = true;
+      }
+      record.documentTitle = model.title;
+      await this.state.set(record);
 
       const write = await this.client.syncDocumentSections(
         record.documentId,
         model.sections,
         record.sections,
         (key) => resolveAttachment(item.libraryID, key),
+        async (sections) => {
+          record.sections = sections;
+          await this.state.set(record);
+        },
+        snapshot,
       );
       record.sections = write.sections;
       record.sourceHash = write.errors.length ? "" : model.sourceHash;
       record.lastSyncedAt = new Date().toISOString();
+      if (!write.errors.length) delete record.pendingSync;
       await this.state.set(record);
       return {
         ...base,
@@ -144,7 +175,12 @@ export class SyncService {
           ? "partial"
           : created
             ? "created"
-            : "updated",
+            : write.changed ||
+                titleChanged ||
+                previousSourceHash !== model.sourceHash ||
+                wasPending
+              ? "updated"
+              : "unchanged",
         documentUrl: record.documentUrl,
         errors: write.errors,
       };
@@ -155,7 +191,10 @@ export class SyncService {
   }
 
   async deleteItem(item: Zotero.Item): Promise<boolean> {
-    return this.withItemOperation(item, () => this.performDeleteItem(item));
+    const topLevelItem = resolveTopLevelItem(item);
+    return this.withItemOperation(topLevelItem, () =>
+      this.performDeleteItem(topLevelItem),
+    );
   }
 
   private async performDeleteItem(item: Zotero.Item): Promise<boolean> {
@@ -192,7 +231,11 @@ export class SyncService {
   }
 
   async openItem(item: Zotero.Item): Promise<boolean> {
-    const record = await this.state.get(item.libraryID, item.key);
+    const topLevelItem = resolveTopLevelItem(item);
+    const record = await this.state.get(
+      topLevelItem.libraryID,
+      topLevelItem.key,
+    );
     if (!record) return false;
     Zotero.launchURL(record.documentUrl);
     return true;
@@ -212,7 +255,7 @@ export function uniqueRegularUserItems(items: Zotero.Item[]): Zotero.Item[] {
   const seen = new Set<string>();
   const resolved: Zotero.Item[] = [];
   items.forEach((selectedItem) => {
-    const item = selectedItem.topLevelItem;
+    const item = resolveTopLevelItem(selectedItem);
     if (!item.isRegularItem() || item.libraryID !== userLibraryID) return false;
     const key = `${item.libraryID}:${item.key}`;
     if (seen.has(key)) return;
@@ -220,6 +263,10 @@ export function uniqueRegularUserItems(items: Zotero.Item[]): Zotero.Item[] {
     resolved.push(item);
   });
   return resolved;
+}
+
+function resolveTopLevelItem(item: Zotero.Item): Zotero.Item {
+  return item.topLevelItem || item;
 }
 
 function assertSupportedItem(item: Zotero.Item): void {

@@ -11,6 +11,7 @@ import {
   parseFolderToken,
   prepareCalloutBlock,
   prepareConvertedBlocks,
+  replaceConvertedImageMarkers,
   requireMediaFileToken,
   restoreConvertedEquations,
 } from "../src/modules/feishuClient";
@@ -23,22 +24,29 @@ describe("Zotero Feishu Sync helpers", function () {
 
     assert.deepEqual(
       blocks.map((block) => block.type),
-      ["paragraph", "image", "paragraph"],
+      ["html"],
     );
-    assert.deepInclude((blocks[0] as any).runs[1], {
-      text: "world",
-      style: { bold: true },
+    assert.equal(
+      (blocks[0] as any).content,
+      "<p>Hello <strong>world</strong><span>__ZOTERO_FEISHU_IMAGE_0__</span>after</p>",
+    );
+    assert.deepInclude((blocks[0] as any).images[0], {
+      marker: "__ZOTERO_FEISHU_IMAGE_0__",
+      attachmentKey: "ABC123",
+      alt: "figure",
     });
-    assert.equal((blocks[1] as any).attachmentKey, "ABC123");
-    assert.equal((blocks[2] as any).runs[0].text, "after");
   });
 
-  it("keeps top-level Zotero images on the local upload path", function () {
+  it("keeps top-level Zotero images in the native conversion path", function () {
     const blocks = noteHtmlToBlocks(
       '<img data-attachment-key="TOP123" alt="top-level">',
     );
-    assert.equal(blocks[0].type, "image");
-    assert.equal((blocks[0] as any).attachmentKey, "TOP123");
+    assert.equal(blocks[0].type, "html");
+    assert.equal(
+      (blocks[0] as any).content,
+      "<span>__ZOTERO_FEISHU_IMAGE_0__</span>",
+    );
+    assert.equal((blocks[0] as any).images[0].attachmentKey, "TOP123");
   });
 
   it("keeps Markdown-equivalent HTML for native Feishu conversion", function () {
@@ -156,6 +164,136 @@ describe("Zotero Feishu Sync helpers", function () {
     );
     assert.equal(inlineConverted.descendants[0].text.style.align, 1);
     assert.equal(displayConverted.descendants[0].text.style.align, 2);
+  });
+
+  it("splits formulas and multiple images into exclusive image blocks", function () {
+    const converted = restoreConvertedEquations(
+      {
+        firstLevelBlockIds: ["paragraph"],
+        descendants: [
+          textBlock(
+            "paragraph",
+            "Given __ZOTERO_FEISHU_EQUATION_0____ZOTERO_FEISHU_IMAGE_0__ then __ZOTERO_FEISHU_IMAGE_1__.",
+          ),
+        ],
+      },
+      [{ content: "M", display: false }],
+    );
+    const result = replaceConvertedImageMarkers(converted, [
+      {
+        marker: "__ZOTERO_FEISHU_IMAGE_0__",
+        attachmentKey: "IMAGE_A",
+        alt: "A",
+      },
+      {
+        marker: "__ZOTERO_FEISHU_IMAGE_1__",
+        attachmentKey: "IMAGE_B",
+        alt: "B",
+      },
+    ]);
+
+    assert.deepEqual(
+      result.firstLevelBlockIds.map(
+        (id) =>
+          result.descendants.find((block: any) => block.block_id === id)
+            .block_type,
+      ),
+      [2, 27, 2, 27, 2],
+    );
+    assert.lengthOf(result.imageBlocks || [], 2);
+    const firstText = result.descendants.find(
+      (block: any) => block.block_id === result.firstLevelBlockIds[0],
+    );
+    assert.equal(firstText.text.elements[1].equation.content, "M");
+  });
+
+  it("preserves table cells and nested list children around images", function () {
+    const table = replaceConvertedImageMarkers(
+      {
+        firstLevelBlockIds: ["table"],
+        descendants: [
+          {
+            block_id: "table",
+            block_type: 31,
+            table: { property: { row_size: 1, column_size: 1 } },
+            children: ["cell"],
+          },
+          {
+            block_id: "cell",
+            block_type: 32,
+            table_cell: {},
+            children: ["cell-text"],
+          },
+          textBlock("cell-text", "Before __ZOTERO_FEISHU_IMAGE_0__ after"),
+        ],
+      },
+      [
+        {
+          marker: "__ZOTERO_FEISHU_IMAGE_0__",
+          attachmentKey: "TABLE_IMAGE",
+          alt: "table",
+        },
+      ],
+    );
+    const cell = table.descendants.find(
+      (block: any) => block.block_id === "cell",
+    );
+    assert.deepEqual(
+      cell.children.map(
+        (id: string) =>
+          table.descendants.find((block: any) => block.block_id === id)
+            .block_type,
+      ),
+      [2, 27, 2],
+    );
+
+    const list = replaceConvertedImageMarkers(
+      {
+        firstLevelBlockIds: ["item"],
+        descendants: [
+          {
+            block_id: "item",
+            block_type: 13,
+            ordered: {
+              elements: [
+                {
+                  text_run: {
+                    content: "Before __ZOTERO_FEISHU_IMAGE_0__ after",
+                    text_element_style: {},
+                  },
+                },
+              ],
+              style: { sequence: "1" },
+            },
+            children: ["nested"],
+          },
+          {
+            block_id: "nested",
+            block_type: 12,
+            bullet: { elements: ["Nested"], style: {} },
+          },
+        ],
+      },
+      [
+        {
+          marker: "__ZOTERO_FEISHU_IMAGE_0__",
+          attachmentKey: "LIST_IMAGE",
+          alt: "list",
+        },
+      ],
+    );
+    const item = list.descendants.find(
+      (block: any) => block.block_id === "item",
+    );
+    assert.equal(item.block_type, 13);
+    assert.deepEqual(
+      item.children.map(
+        (id: string) =>
+          list.descendants.find((block: any) => block.block_id === id)
+            .block_type,
+      ),
+      [27, 2, 12],
+    );
   });
 
   it("keeps stable fragment identities across nearby note edits", async function () {

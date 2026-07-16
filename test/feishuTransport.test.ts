@@ -1,8 +1,13 @@
 import { assert } from "chai";
 import { FeishuClient } from "../src/modules/feishuClient";
+import { remoteHashForSection } from "../src/modules/feishu/documentSnapshot";
 import type { OAuthService } from "../src/modules/oauthService";
 import { FeishuError, FeishuTransport } from "../src/modules/feishu/transport";
-import type { DocumentSection, SyncedSection } from "../src/modules/types";
+import type {
+  DocumentSection,
+  DocumentSnapshot,
+  SyncedSection,
+} from "../src/modules/types";
 
 describe("Feishu transport", function () {
   let originalRequest: typeof Zotero.HTTP.request;
@@ -97,14 +102,34 @@ describe("Feishu transport", function () {
   it("replaces only the changed document section", async function () {
     const requests: Array<{ method: string; url: string; body?: any }> = [];
     const rootBlocks = [
-      { block_id: "metadata-block" },
-      { block_id: "old-note-block" },
-      { block_id: "pdf-block" },
+      textDocumentBlock("metadata-block", "metadata"),
+      textDocumentBlock("old-note-block", "old note"),
+      textDocumentBlock("user-block", "user content"),
+      textDocumentBlock("pdf-block", "pdf"),
     ];
+    const initialSnapshot = documentSnapshot(rootBlocks);
+    const metadataRemoteHash = await remoteHashForSection(initialSnapshot, {
+      blockIds: ["metadata-block"],
+    });
+    const noteRemoteHash = await remoteHashForSection(initialSnapshot, {
+      blockIds: ["old-note-block"],
+    });
+    const pdfRemoteHash = await remoteHashForSection(initialSnapshot, {
+      blockIds: ["pdf-block"],
+    });
     Zotero.HTTP.request = (async (method, url, options) => {
       const body = options?.body ? JSON.parse(String(options.body)) : undefined;
       requests.push({ method, url, body });
-      if (method === "GET" && url.endsWith("/children?page_size=500")) {
+      if (method === "GET" && url.endsWith("/documents/document-id")) {
+        return response({
+          document: {
+            document_id: "document-id",
+            title: "Example",
+            revision_id: 1,
+          },
+        });
+      }
+      if (method === "GET" && url.includes("/children?")) {
         return response({ items: rootBlocks, has_more: false });
       }
       if (method === "DELETE" && url.includes("/batch_delete")) {
@@ -115,6 +140,7 @@ describe("Feishu transport", function () {
         const created = body.children.map((block: any, index: number) => ({
           ...block,
           block_id: `new-note-block-${index}`,
+          parent_id: "document-id",
         }));
         rootBlocks.splice(body.index, 0, ...created);
         return response({ children: created });
@@ -123,9 +149,11 @@ describe("Feishu transport", function () {
     }) as typeof Zotero.HTTP.request;
 
     const previous: SyncedSection[] = [
-      syncedSection("metadata", "metadata-v1", ["metadata-block"]),
-      syncedSection("note:A", "note-v1", ["old-note-block"]),
-      syncedSection("pdfs", "pdfs-v1", ["pdf-block"]),
+      syncedSection("metadata", "metadata-v1", metadataRemoteHash, [
+        "metadata-block",
+      ]),
+      syncedSection("note:A", "note-v1", noteRemoteHash, ["old-note-block"]),
+      syncedSection("pdfs", "pdfs-v1", pdfRemoteHash, ["pdf-block"]),
     ];
     const desired: DocumentSection[] = [
       documentSection("metadata", "metadata-v1"),
@@ -139,13 +167,17 @@ describe("Feishu transport", function () {
     assert.isFalse(result.rebuilt);
     assert.deepEqual(
       rootBlocks.map((block) => block.block_id),
-      ["metadata-block", "new-note-block-0", "pdf-block"],
+      ["metadata-block", "new-note-block-0", "user-block", "pdf-block"],
     );
-    assert.deepEqual(result.sections, [
-      previous[0],
-      syncedSection("note:A", "note-v2", ["new-note-block-0"]),
-      previous[2],
-    ]);
+    assert.deepEqual(result.sections[0], previous[0]);
+    assert.deepInclude(result.sections[1], {
+      key: "note:A",
+      sourceHash: "note-v2",
+      blockIds: ["new-note-block-0"],
+    });
+    assert.isNotEmpty(result.sections[1].remoteHash);
+    assert.deepEqual(result.sections[2], previous[2]);
+    assert.isTrue(result.changed);
     assert.lengthOf(
       requests.filter((request) => request.method === "DELETE"),
       1,
@@ -186,7 +218,37 @@ function documentSection(key: string, sourceHash: string): DocumentSection {
 function syncedSection(
   key: string,
   sourceHash: string,
+  remoteHash: string,
   blockIds: string[],
 ): SyncedSection {
-  return { key, sourceHash, blockIds };
+  return { key, sourceHash, remoteHash, blockIds };
+}
+
+function textDocumentBlock(blockId: string, content: string): any {
+  return {
+    block_id: blockId,
+    block_type: 2,
+    parent_id: "document-id",
+    text: {
+      elements: [
+        {
+          text_run: {
+            content,
+            text_element_style: {},
+          },
+        },
+      ],
+      style: {},
+    },
+  };
+}
+
+function documentSnapshot(blocks: any[]): DocumentSnapshot {
+  return {
+    documentId: "document-id",
+    title: "Example",
+    revisionId: 1,
+    rootBlockIds: blocks.map((block) => block.block_id),
+    blocks,
+  };
 }
