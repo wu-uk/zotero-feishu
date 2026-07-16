@@ -1,4 +1,16 @@
 import { version } from "../../package.json";
+import {
+  FeishuDeviceProtocol,
+  InvalidFeishuApplicationError,
+  assertActive,
+  type DeviceHttpResult,
+  type DeviceProtocolDependencies,
+} from "./feishu/deviceProtocol";
+
+export {
+  AuthorizationCancelledError,
+  InvalidFeishuApplicationError,
+} from "./feishu/deviceProtocol";
 
 export const FEISHU_SCOPES = [
   "docx:document",
@@ -33,8 +45,6 @@ export interface AuthorizationProgress {
 
 export type ProgressCallback = (progress: AuthorizationProgress) => void;
 
-export class AuthorizationCancelledError extends Error {}
-
 export class MissingAppPermissionsError extends Error {
   constructor(
     public readonly missingScopes: string[],
@@ -43,8 +53,6 @@ export class MissingAppPermissionsError extends Error {
     super(`Missing Feishu app permissions: ${missingScopes.join(", ")}`);
   }
 }
-
-export class InvalidFeishuApplicationError extends Error {}
 
 export interface RegisteredApp {
   appId: string;
@@ -59,31 +67,18 @@ export interface DeviceTokenResponse {
   scope: string;
 }
 
-interface RequestOptions {
-  headers?: Record<string, string>;
-  body?: string;
-}
-
-interface HttpResult {
-  status: number;
-  data: any;
-}
-
-export interface DeviceAuthDependencies {
-  request(
-    method: string,
-    url: string,
-    options?: RequestOptions,
-  ): Promise<HttpResult>;
-  delay(milliseconds: number): Promise<void>;
-  now(): number;
+export interface DeviceAuthDependencies extends DeviceProtocolDependencies {
   launchURL(url: string): void;
 }
 
 export class FeishuDeviceAuth {
+  private readonly protocol: FeishuDeviceProtocol;
+
   constructor(
     private readonly dependencies: DeviceAuthDependencies = defaultDependencies(),
-  ) {}
+  ) {
+    this.protocol = new FeishuDeviceProtocol(dependencies);
+  }
 
   async registerApplication(
     onProgress?: ProgressCallback,
@@ -91,7 +86,7 @@ export class FeishuDeviceAuth {
   ): Promise<RegisteredApp> {
     assertActive(signal);
     onProgress?.({ phase: "registering_app" });
-    const response = await this.formRequest(REGISTRATION_URL, {
+    const response = await this.protocol.formRequest(REGISTRATION_URL, {
       action: "begin",
       archetype: "PersonalAgent",
       auth_method: "client_secret",
@@ -111,7 +106,7 @@ export class FeishuDeviceAuth {
     });
     this.dependencies.launchURL(verificationUrl);
 
-    const data = await this.poll(
+    const data = await this.protocol.poll(
       {
         url: REGISTRATION_URL,
         body: { action: "poll", device_code: deviceCode },
@@ -132,7 +127,7 @@ export class FeishuDeviceAuth {
   ): Promise<DeviceTokenResponse> {
     assertActive(signal);
     onProgress?.({ phase: "requesting_user_authorization" });
-    const response = await this.formRequest(
+    const response = await this.protocol.formRequest(
       DEVICE_AUTHORIZATION_URL,
       {
         client_id: app.appId,
@@ -164,7 +159,7 @@ export class FeishuDeviceAuth {
     });
     this.dependencies.launchURL(verificationUrl);
 
-    const data = await this.poll(
+    const data = await this.protocol.poll(
       {
         url: TOKEN_URL,
         body: {
@@ -204,70 +199,6 @@ export class FeishuDeviceAuth {
     this.dependencies.launchURL(consoleUrl);
     throw new MissingAppPermissionsError(missingScopes, consoleUrl);
   }
-
-  private async poll(
-    options: {
-      url: string;
-      body: Record<string, string>;
-      interval: number;
-      expiresIn: number;
-    },
-    signal?: AbortSignal,
-  ): Promise<any> {
-    const deadline = this.dependencies.now() + options.expiresIn * 1000;
-    let interval = Math.max(1, options.interval);
-    while (this.dependencies.now() < deadline) {
-      await this.wait(interval * 1000, signal);
-      let response: HttpResult;
-      try {
-        response = await this.formRequest(options.url, options.body);
-      } catch (error) {
-        if (this.dependencies.now() >= deadline) throw error;
-        interval = Math.min(60, interval + 1);
-        continue;
-      }
-      const error = response.data?.error;
-      if (!error && response.status >= 200 && response.status < 300) {
-        return response.data;
-      }
-      if (error === "authorization_pending") continue;
-      if (error === "slow_down") {
-        interval = Math.min(60, interval + 5);
-        continue;
-      }
-      if (error === "access_denied") {
-        throw new Error("Feishu authorization was denied");
-      }
-      if (error === "expired_token" || error === "invalid_grant") {
-        throw new Error("Feishu authorization expired; try again");
-      }
-      if (isInvalidApplication(response.data)) {
-        throw new InvalidFeishuApplicationError(responseMessage(response.data));
-      }
-      assertSuccess(response, "Feishu authorization failed");
-    }
-    throw new Error("Feishu authorization timed out; try again");
-  }
-
-  private formRequest(
-    url: string,
-    body: Record<string, string>,
-    headers: Record<string, string> = {},
-  ): Promise<HttpResult> {
-    return this.dependencies.request("POST", url, {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        ...headers,
-      },
-      body: formEncode(body),
-    });
-  }
-
-  private async wait(milliseconds: number, signal?: AbortSignal) {
-    assertActive(signal);
-    await this.dependencies.delay(milliseconds);
-    assertActive(signal);
-  }
 }
 
 function defaultDependencies(): DeviceAuthDependencies {
@@ -290,7 +221,7 @@ function defaultDependencies(): DeviceAuthDependencies {
   };
 }
 
-function assertSuccess(response: HttpResult, fallback: string): void {
+function assertSuccess(response: DeviceHttpResult, fallback: string): void {
   const data = response.data || {};
   if (
     response.status >= 200 &&
@@ -303,10 +234,6 @@ function assertSuccess(response: HttpResult, fallback: string): void {
   throw new Error(data.error_description || data.msg || data.error || fallback);
 }
 
-function assertActive(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new AuthorizationCancelledError();
-}
-
 function requiredString(data: any, key: string): string {
   const value = data?.[key];
   if (typeof value !== "string" || !value) {
@@ -317,15 +244,6 @@ function requiredString(data: any, key: string): string {
 
 function numberValue(value: unknown, fallback: number): number {
   return typeof value === "number" && value > 0 ? value : fallback;
-}
-
-function formEncode(body: Record<string, string>): string {
-  return Object.entries(body)
-    .map(
-      ([key, value]) =>
-        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
-    )
-    .join("&");
 }
 
 function missingGrantedScopes(scope: string): string[] {
