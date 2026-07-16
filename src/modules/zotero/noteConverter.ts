@@ -24,6 +24,15 @@ export function noteHtmlToBlocks(html: string): RichBlock[] {
       appendBlockNode(node, blocks);
       return;
     }
+    if (isOrderedList(node)) {
+      flushConvertibleHtml();
+      blocks.push({
+        type: "html",
+        content: splitOrderedListItems(node as Element),
+        normalizeOrderedListItems: true,
+      });
+      return;
+    }
     convertibleHtml += serializeNode(node);
   });
   flushConvertibleHtml();
@@ -52,6 +61,31 @@ function containsImage(node: Node): boolean {
   if (node.nodeType !== 1) return false;
   const element = node as Element;
   return element.matches("img") || Boolean(element.querySelector("img"));
+}
+
+function isOrderedList(node: Node): boolean {
+  return (
+    node.nodeType === 1 && (node as Element).tagName.toLowerCase() === "ol"
+  );
+}
+
+function splitOrderedListItems(element: Element): string {
+  const items = Array.from(element.children).filter(
+    (child) => child.tagName.toLowerCase() === "li",
+  );
+  if (!items.length) return String(element.outerHTML);
+
+  let sequence = integerAttribute(element, "start") ?? 1;
+  return items
+    .map((item) => {
+      sequence = integerAttribute(item, "value") ?? sequence;
+      const list = element.cloneNode(false) as Element;
+      list.setAttribute("start", String(sequence));
+      list.appendChild(item.cloneNode(true));
+      sequence++;
+      return String(list.outerHTML);
+    })
+    .join("");
 }
 
 function serializeNode(node: Node): string {
@@ -193,4 +227,10 @@ function safeLink(value: string | null): string | undefined {
 function numberAttribute(element: Element, name: string): number | undefined {
   const value = Number(element.getAttribute(name));
   return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function integerAttribute(element: Element, name: string): number | undefined {
+  const value = element.getAttribute(name);
+  if (!value || !/^-?\d+$/.test(value)) return undefined;
+  return Number(value);
 }

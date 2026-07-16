@@ -5,6 +5,7 @@ import {
 } from "../src/modules/documentBuilder";
 import {
   createdFileBlockId,
+  normalizeConvertedOrderedListItems,
   parseFolderToken,
   prepareCalloutBlock,
   prepareConvertedBlocks,
@@ -48,6 +49,76 @@ describe("Zotero Feishu Sync helpers", function () {
     assert.include(content, "<ul><li>One<ul><li>Nested</li></ul></li></ul>");
     assert.include(content, "<pre><code>const n = 1;</code></pre>");
     assert.include(content, "<table>");
+  });
+
+  it("marks real ordered items before native Feishu conversion", function () {
+    const blocks = noteHtmlToBlocks(
+      '<div data-schema-version="9"><p>Before</p><ol><li><p><strong>First</strong></p><p>Body</p></li><li value="4"><p>Fourth</p></li></ol><p>After</p></div>',
+    );
+
+    assert.deepEqual(
+      blocks.map((block) => block.type),
+      ["html", "html", "html"],
+    );
+    assert.equal((blocks[0] as any).content, "<p>Before</p>");
+    assert.isTrue((blocks[1] as any).normalizeOrderedListItems);
+    assert.equal(
+      (blocks[1] as any).content,
+      '<ol start="1"><li><p><strong>First</strong></p><p>Body</p></li></ol><ol start="4"><li value="4"><p>Fourth</p></li></ol>',
+    );
+    assert.equal((blocks[2] as any).content, "<p>After</p>");
+  });
+
+  it("restores paragraphs and nested blocks inside ordered items", function () {
+    const converted = normalizeConvertedOrderedListItems({
+      firstLevelBlockIds: [
+        "first",
+        "first-body",
+        "second",
+        "second-intro",
+        "table",
+        "second-after",
+      ],
+      descendants: [
+        orderedBlock("first", "1", "First"),
+        orderedBlock("first-body", "auto", "Body"),
+        orderedBlock("second", "2", "Second"),
+        {
+          ...orderedBlock("second-intro", "auto", "Intro"),
+          children: ["bullet"],
+        },
+        { block_id: "bullet", block_type: 12, bullet: { elements: [] } },
+        {
+          block_id: "table",
+          block_type: 31,
+          table: { property: {} },
+          children: ["cell"],
+        },
+        orderedBlock("second-after", "auto", "After"),
+      ],
+    });
+
+    assert.deepEqual(converted.firstLevelBlockIds, ["first", "second"]);
+    assert.deepEqual((converted.descendants[0] as any).children, [
+      "first-body",
+    ]);
+    assert.deepEqual((converted.descendants[2] as any).children, [
+      "second-intro",
+      "bullet",
+      "table",
+      "second-after",
+    ]);
+    assert.deepInclude(converted.descendants[1], {
+      block_id: "first-body",
+      block_type: 2,
+    });
+    assert.equal((converted.descendants[1] as any).text.elements[0], "Body");
+    assert.notProperty(
+      (converted.descendants[1] as any).text.style,
+      "sequence",
+    );
+    assert.notProperty(converted.descendants[3], "children");
+    assert.equal(converted.descendants[5].block_type, 31);
   });
 
   it("removes read-only table merge metadata before insertion", function () {
@@ -162,3 +233,14 @@ describe("Zotero Feishu Sync helpers", function () {
     assert.throws(() => parseFolderToken("not a folder token"));
   });
 });
+
+function orderedBlock(blockId: string, sequence: string, content: string): any {
+  return {
+    block_id: blockId,
+    block_type: 13,
+    ordered: {
+      elements: [content],
+      style: { align: 1, sequence },
+    },
+  };
+}

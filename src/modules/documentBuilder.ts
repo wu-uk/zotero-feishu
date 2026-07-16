@@ -6,7 +6,7 @@ import {
   type SourceData,
 } from "./zotero/sourceCollector";
 
-const DOCUMENT_SCHEMA_VERSION = 9;
+const DOCUMENT_SCHEMA_VERSION = 10;
 
 export { noteHtmlToBlocks } from "./zotero/noteConverter";
 

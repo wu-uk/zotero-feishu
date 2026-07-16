@@ -68,7 +68,11 @@ export type RichBlock =
   | TextBlock
   | CalloutBlock
   | { type: "divider" }
-  | { type: "html"; content: string }
+  | {
+      type: "html";
+      content: string;
+      normalizeOrderedListItems?: boolean;
+    }
   | {
       type: "file";
       attachmentKey: string;

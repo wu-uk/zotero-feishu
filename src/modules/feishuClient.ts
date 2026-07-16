@@ -2,6 +2,7 @@ import type { CalloutBlock, FeishuUser, RichBlock } from "./types";
 import { OAuthService } from "./oauthService";
 import {
   createdFileBlockId,
+  normalizeConvertedOrderedListItems,
   prepareCalloutBlock,
   prepareConvertedBlocks,
   toFeishuBlock,
@@ -13,6 +14,7 @@ import { FeishuError, FeishuTransport } from "./feishu/transport";
 export { FeishuError } from "./feishu/transport";
 export {
   createdFileBlockId,
+  normalizeConvertedOrderedListItems,
   prepareCalloutBlock,
   prepareConvertedBlocks,
 } from "./feishu/blocks";
@@ -99,7 +101,13 @@ export class FeishuClient {
     const convertedSegments = new Map<RichBlock, ConvertedBlocks>();
     for (const block of blocks) {
       if (block.type === "html") {
-        convertedSegments.set(block, await this.convertHtml(block.content));
+        convertedSegments.set(
+          block,
+          await this.convertHtml(
+            block.content,
+            Boolean(block.normalizeOrderedListItems),
+          ),
+        );
       }
     }
 
@@ -255,7 +263,10 @@ export class FeishuClient {
     );
   }
 
-  private async convertHtml(content: string): Promise<ConvertedBlocks> {
+  private async convertHtml(
+    content: string,
+    normalizeOrderedListItems: boolean,
+  ): Promise<ConvertedBlocks> {
     const converted = await this.transport.request(
       "POST",
       "/docx/v1/documents/blocks/convert",
@@ -266,7 +277,10 @@ export class FeishuClient {
     if (descendants.length > 1000) {
       throw new Error("A converted note segment exceeds 1000 Feishu blocks");
     }
-    return { firstLevelBlockIds, descendants };
+    const result = { firstLevelBlockIds, descendants };
+    return normalizeOrderedListItems
+      ? normalizeConvertedOrderedListItems(result)
+      : result;
   }
 
   private async appendConvertedBlocks(

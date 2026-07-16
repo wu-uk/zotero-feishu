@@ -62,6 +62,48 @@ export function prepareConvertedBlocks(blocks: any[]): any[] {
   });
 }
 
+export function normalizeConvertedOrderedListItems(
+  converted: ConvertedBlocks,
+): ConvertedBlocks {
+  const descendants = converted.descendants;
+  const byId = new Map(
+    descendants.map((block) => [String(block.block_id || ""), block]),
+  );
+  const roots = converted.firstLevelBlockIds;
+  const normalizedRoots: string[] = [];
+
+  for (let index = 0; index < roots.length;) {
+    const anchorId = roots[index];
+    const anchor = byId.get(anchorId);
+    if (!isExplicitOrderedBlock(anchor)) {
+      normalizedRoots.push(anchorId);
+      index++;
+      continue;
+    }
+
+    normalizedRoots.push(anchorId);
+    const children = Array.isArray(anchor.children) ? [...anchor.children] : [];
+    index++;
+    while (index < roots.length) {
+      const childId = roots[index];
+      const child = byId.get(childId);
+      if (isExplicitOrderedBlock(child)) break;
+
+      children.push(childId);
+      if (isAutomaticOrderedBlock(child)) {
+        const nested = Array.isArray(child.children) ? [...child.children] : [];
+        convertOrderedBlockToText(child);
+        delete child.children;
+        children.push(...nested);
+      }
+      index++;
+    }
+    if (children.length) anchor.children = children;
+  }
+
+  return { firstLevelBlockIds: normalizedRoots, descendants };
+}
+
 export function toFeishuBlock(block: TextBlock | { type: "divider" }): any {
   if (block.type === "divider") return { block_type: 22, divider: {} };
   const mapping: Record<string, [number, string]> = {
@@ -82,6 +124,26 @@ export function toFeishuBlock(block: TextBlock | { type: "divider" }): any {
     block_type: blockType,
     [property]: { elements: block.runs.map(toTextElement), style: {} },
   };
+}
+
+function isExplicitOrderedBlock(block: any): boolean {
+  return (
+    block?.block_type === 13 &&
+    block.ordered?.style?.sequence &&
+    block.ordered.style.sequence !== "auto"
+  );
+}
+
+function isAutomaticOrderedBlock(block: any): boolean {
+  return block?.block_type === 13 && block.ordered?.style?.sequence === "auto";
+}
+
+function convertOrderedBlockToText(block: any): void {
+  const text = block.ordered;
+  if (text?.style) delete text.style.sequence;
+  block.block_type = 2;
+  block.text = text;
+  delete block.ordered;
 }
 
 function temporaryBlockId(): string {
