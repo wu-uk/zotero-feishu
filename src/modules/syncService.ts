@@ -9,10 +9,12 @@ import { OAuthService } from "./oauthService";
 import { StateStore } from "./stateStore";
 import type {
   DocumentModel,
+  DocumentSection,
+  DocumentWriteResult,
   FeishuUser,
-  RichBlock,
   SyncRecord,
   SyncResult,
+  SyncedSection,
 } from "./types";
 
 export type ProgressCallback = (
@@ -32,11 +34,12 @@ export interface SyncClient {
   testConnection(folderToken: string): Promise<void>;
   createDocument(title: string, folderToken: string): Promise<CreatedDocument>;
   documentExists(documentId: string): Promise<boolean>;
-  replaceDocument(
+  syncDocumentSections(
     documentId: string,
-    blocks: RichBlock[],
+    sections: DocumentSection[],
+    previous: SyncedSection[] | undefined,
     resolveAttachment: (attachmentKey: string) => Promise<string>,
-  ): Promise<string[]>;
+  ): Promise<DocumentWriteResult>;
   deleteDocument(documentId: string): Promise<void>;
 }
 
@@ -125,19 +128,25 @@ export class SyncService {
         await this.state.set(record);
       }
 
-      const errors = await this.client.replaceDocument(
+      const write = await this.client.syncDocumentSections(
         record.documentId,
-        model.blocks,
+        model.sections,
+        record.sections,
         (key) => resolveAttachment(item.libraryID, key),
       );
-      record.sourceHash = errors.length ? "" : model.sourceHash;
+      record.sections = write.sections;
+      record.sourceHash = write.errors.length ? "" : model.sourceHash;
       record.lastSyncedAt = new Date().toISOString();
       await this.state.set(record);
       return {
         ...base,
-        outcome: errors.length ? "partial" : created ? "created" : "updated",
+        outcome: write.errors.length
+          ? "partial"
+          : created
+            ? "created"
+            : "updated",
         documentUrl: record.documentUrl,
-        errors,
+        errors: write.errors,
       };
     } catch (error) {
       ztoolkit.log("Feishu sync failed", item.key, error);

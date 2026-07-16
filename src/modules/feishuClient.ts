@@ -1,14 +1,24 @@
-import type { CalloutBlock, FeishuUser, RichBlock } from "./types";
+import type {
+  CalloutBlock,
+  DocumentSection,
+  DocumentWriteResult,
+  EquationSource,
+  FeishuUser,
+  RichBlock,
+  SyncedSection,
+} from "./types";
 import { OAuthService } from "./oauthService";
 import {
   createdFileBlockId,
   normalizeConvertedOrderedListItems,
   prepareCalloutBlock,
   prepareConvertedBlocks,
+  restoreConvertedEquations,
   toFeishuBlock,
   type ConvertedBlocks,
 } from "./feishu/blocks";
 import { FeishuMediaUploader, type MediaKind } from "./feishu/media";
+import { planSectionSync } from "./feishu/sectionSync";
 import { FeishuError, FeishuTransport } from "./feishu/transport";
 
 export { FeishuError } from "./feishu/transport";
@@ -17,6 +27,7 @@ export {
   normalizeConvertedOrderedListItems,
   prepareCalloutBlock,
   prepareConvertedBlocks,
+  restoreConvertedEquations,
 } from "./feishu/blocks";
 export { requireMediaFileToken } from "./feishu/media";
 
@@ -92,47 +103,137 @@ export class FeishuClient {
     }
   }
 
-  async replaceDocument(
+  async syncDocumentSections(
     documentId: string,
-    blocks: RichBlock[],
+    sections: DocumentSection[],
+    previous: SyncedSection[] | undefined,
     resolveAttachment: (attachmentKey: string) => Promise<string>,
-  ): Promise<string[]> {
-    const errors: string[] = [];
-    const convertedSegments = new Map<RichBlock, ConvertedBlocks>();
-    for (const block of blocks) {
-      if (block.type === "html") {
-        convertedSegments.set(
-          block,
-          await this.convertHtml(
-            block.content,
-            Boolean(block.normalizeOrderedListItems),
-          ),
-        );
-      }
+  ): Promise<DocumentWriteResult> {
+    const rootBlockIds = (await this.getRootChildren(documentId)).map((block) =>
+      String(block.block_id || ""),
+    );
+    const plan = planSectionSync(rootBlockIds, previous, sections);
+    if (plan.mode === "rebuild") {
+      return this.rebuildDocument(
+        documentId,
+        rootBlockIds.length,
+        sections,
+        resolveAttachment,
+      );
     }
 
-    const existing = await this.getRootChildren(documentId);
-    await this.deleteChildren(documentId, documentId, existing.length);
+    const retainedKeys = new Set(plan.retained.map((section) => section.key));
+    const changed = sections.filter(
+      (section) => !retainedKeys.has(section.key),
+    );
+    const convertedSegments = await this.prepareConvertedSegments(changed);
+    for (const deletion of plan.deletions) {
+      await this.deleteChildRange(
+        documentId,
+        documentId,
+        deletion.startIndex,
+        deletion.endIndex,
+      );
+    }
 
+    const writtenSections: SyncedSection[] = [];
+    const errors: string[] = [];
+    let retainedIndex = 0;
+    let blockIndex = 0;
+    for (const section of sections) {
+      const retained = plan.retained[retainedIndex];
+      if (retained?.key === section.key) {
+        writtenSections.push(retained);
+        retainedIndex++;
+        blockIndex += retained.blockIds.length;
+        continue;
+      }
+      const written = await this.writeSection(
+        documentId,
+        section,
+        blockIndex,
+        convertedSegments,
+        resolveAttachment,
+      );
+      writtenSections.push(written.section);
+      errors.push(...written.errors);
+      blockIndex += written.section.blockIds.length;
+    }
+    return { sections: writtenSections, errors, rebuilt: false };
+  }
+
+  private async rebuildDocument(
+    documentId: string,
+    existingBlockCount: number,
+    sections: DocumentSection[],
+    resolveAttachment: (attachmentKey: string) => Promise<string>,
+  ): Promise<DocumentWriteResult> {
+    const convertedSegments = await this.prepareConvertedSegments(sections);
+    await this.deleteChildRange(documentId, documentId, 0, existingBlockCount);
+    const writtenSections: SyncedSection[] = [];
+    const errors: string[] = [];
+    let blockIndex = 0;
+    for (const section of sections) {
+      const written = await this.writeSection(
+        documentId,
+        section,
+        blockIndex,
+        convertedSegments,
+        resolveAttachment,
+      );
+      writtenSections.push(written.section);
+      errors.push(...written.errors);
+      blockIndex += written.section.blockIds.length;
+    }
+    return { sections: writtenSections, errors, rebuilt: true };
+  }
+
+  private async writeSection(
+    documentId: string,
+    section: DocumentSection,
+    startIndex: number,
+    convertedSegments: Map<RichBlock, ConvertedBlocks>,
+    resolveAttachment: (attachmentKey: string) => Promise<string>,
+  ): Promise<{ section: SyncedSection; errors: string[] }> {
+    const errors: string[] = [];
+    const blockIds: string[] = [];
+    let blockIndex = startIndex;
     let pending: any[] = [];
     const flush = async () => {
       if (!pending.length) return;
-      await this.appendBlocks(documentId, pending);
+      const created = await this.appendBlocks(
+        documentId,
+        pending,
+        documentId,
+        blockIndex,
+      );
+      const createdIds = requireCreatedBlockIds(created, pending.length);
+      blockIds.push(...createdIds);
+      blockIndex += createdIds.length;
       pending = [];
     };
 
-    for (const block of blocks) {
+    for (const block of section.blocks) {
       if (block.type === "html") {
         await flush();
-        await this.appendConvertedBlocks(
+        const createdIds = await this.appendConvertedBlocks(
           documentId,
           convertedSegments.get(block)!,
+          blockIndex,
         );
+        blockIds.push(...createdIds);
+        blockIndex += createdIds.length;
         continue;
       }
       if (block.type === "callout") {
         await flush();
-        await this.appendCallout(documentId, block);
+        const createdIds = await this.appendCallout(
+          documentId,
+          block,
+          blockIndex,
+        );
+        blockIds.push(...createdIds);
+        blockIndex += createdIds.length;
         continue;
       }
       if (block.type !== "image" && block.type !== "file") {
@@ -144,11 +245,19 @@ export class FeishuClient {
       try {
         const path = await resolveAttachment(block.attachmentKey);
         const kind: MediaKind = block.type;
-        const created = await this.appendBlocks(documentId, [
-          kind === "image"
-            ? { block_type: 27, image: {} }
-            : { block_type: 23, file: { token: "" } },
-        ]);
+        const created = await this.appendBlocks(
+          documentId,
+          [
+            kind === "image"
+              ? { block_type: 27, image: {} }
+              : { block_type: 23, file: { token: "" } },
+          ],
+          documentId,
+          blockIndex,
+        );
+        const createdRootIds = requireCreatedBlockIds(created, 1);
+        blockIds.push(...createdRootIds);
+        blockIndex += createdRootIds.length;
         const blockId =
           kind === "image"
             ? String(created[0]?.block_id || "")
@@ -164,16 +273,34 @@ export class FeishuClient {
             : block.name || block.attachmentKey;
         const message = `${label} ${name}: ${errorMessage(error)}`;
         errors.push(message);
-        await this.appendBlocks(documentId, [
-          toFeishuBlock({
-            type: "paragraph",
-            runs: [{ text: `[${message}]` }],
-          }),
-        ]);
+        const created = await this.appendBlocks(
+          documentId,
+          [
+            toFeishuBlock({
+              type: "paragraph",
+              runs: [{ text: `[${message}]` }],
+            }),
+          ],
+          documentId,
+          blockIndex,
+        );
+        const createdIds = requireCreatedBlockIds(created, 1);
+        blockIds.push(...createdIds);
+        blockIndex += createdIds.length;
       }
     }
     await flush();
-    return errors;
+    if (!blockIds.length) {
+      throw new Error(`Document section ${section.key} produced no blocks`);
+    }
+    return {
+      section: {
+        key: section.key,
+        sourceHash: errors.length ? "" : section.sourceHash,
+        blockIds,
+      },
+      errors,
+    };
   }
 
   async deleteDocument(documentId: string): Promise<void> {
@@ -222,17 +349,38 @@ export class FeishuClient {
     return items;
   }
 
-  private async deleteChildren(
+  private async prepareConvertedSegments(
+    sections: DocumentSection[],
+  ): Promise<Map<RichBlock, ConvertedBlocks>> {
+    const convertedSegments = new Map<RichBlock, ConvertedBlocks>();
+    for (const section of sections) {
+      for (const block of section.blocks) {
+        if (block.type !== "html") continue;
+        convertedSegments.set(
+          block,
+          await this.convertHtml(
+            block.content,
+            Boolean(block.normalizeOrderedListItems),
+            block.equations || [],
+          ),
+        );
+      }
+    }
+    return convertedSegments;
+  }
+
+  private async deleteChildRange(
     documentId: string,
     parentBlockId: string,
-    count: number,
+    startIndex: number,
+    endIndex: number,
   ): Promise<void> {
-    if (!count) return;
+    if (endIndex <= startIndex) return;
     await this.transport.waitForDocumentWrite();
     await this.transport.request(
       "DELETE",
       `/docx/v1/documents/${documentId}/blocks/${parentBlockId}/children/batch_delete?document_revision_id=-1`,
-      { start_index: 0, end_index: count },
+      { start_index: startIndex, end_index: endIndex },
     );
   }
 
@@ -240,12 +388,13 @@ export class FeishuClient {
     documentId: string,
     children: any[],
     parentBlockId = documentId,
+    index = -1,
   ): Promise<any[]> {
     await this.transport.waitForDocumentWrite();
     const data = await this.transport.request(
       "POST",
       `/docx/v1/documents/${documentId}/blocks/${parentBlockId}/children?document_revision_id=-1`,
-      { index: -1, children },
+      { index, children },
     );
     return data.children || [];
   }
@@ -253,19 +402,22 @@ export class FeishuClient {
   private async appendCallout(
     documentId: string,
     block: CalloutBlock,
-  ): Promise<void> {
+    index: number,
+  ): Promise<string[]> {
     const prepared = prepareCalloutBlock(block);
     await this.transport.waitForDocumentWrite();
     await this.transport.request(
       "POST",
       `/docx/v1/documents/${documentId}/blocks/${documentId}/descendant?document_revision_id=-1`,
-      { index: -1, ...prepared },
+      { index, ...prepared },
     );
+    return this.getInsertedRootBlockIds(documentId, index, 1);
   }
 
   private async convertHtml(
     content: string,
     normalizeOrderedListItems: boolean,
+    equations: EquationSource[],
   ): Promise<ConvertedBlocks> {
     const converted = await this.transport.request(
       "POST",
@@ -277,28 +429,53 @@ export class FeishuClient {
     if (descendants.length > 1000) {
       throw new Error("A converted note segment exceeds 1000 Feishu blocks");
     }
-    const result = { firstLevelBlockIds, descendants };
-    return normalizeOrderedListItems
-      ? normalizeConvertedOrderedListItems(result)
-      : result;
+    let result = { firstLevelBlockIds, descendants };
+    if (equations.length) {
+      result = restoreConvertedEquations(result, equations);
+    }
+    if (normalizeOrderedListItems) {
+      result = normalizeConvertedOrderedListItems(result);
+    }
+    return result;
   }
 
   private async appendConvertedBlocks(
     documentId: string,
     converted: ConvertedBlocks,
-  ): Promise<void> {
+    index: number,
+  ): Promise<string[]> {
     const { firstLevelBlockIds, descendants } = converted;
-    if (!firstLevelBlockIds.length || !descendants.length) return;
+    if (!firstLevelBlockIds.length || !descendants.length) return [];
     await this.transport.waitForDocumentWrite();
     await this.transport.request(
       "POST",
       `/docx/v1/documents/${documentId}/blocks/${documentId}/descendant?document_revision_id=-1`,
       {
-        index: -1,
+        index,
         children_id: firstLevelBlockIds,
         descendants,
       },
     );
+    return this.getInsertedRootBlockIds(
+      documentId,
+      index,
+      firstLevelBlockIds.length,
+    );
+  }
+
+  private async getInsertedRootBlockIds(
+    documentId: string,
+    index: number,
+    count: number,
+  ): Promise<string[]> {
+    const ids = (await this.getRootChildren(documentId))
+      .slice(index, index + count)
+      .map((block) => String(block.block_id || ""))
+      .filter(Boolean);
+    if (ids.length !== count) {
+      throw new Error("Feishu did not return the inserted root block IDs");
+    }
+    return ids;
   }
 }
 
@@ -314,4 +491,14 @@ export function parseFolderToken(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function requireCreatedBlockIds(blocks: any[], expected: number): string[] {
+  const ids = blocks
+    .map((block) => String(block?.block_id || ""))
+    .filter(Boolean);
+  if (ids.length !== expected) {
+    throw new Error("Feishu did not return the created block IDs");
+  }
+  return ids;
 }

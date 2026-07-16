@@ -1,6 +1,6 @@
 import type { SyncRecord, SyncState } from "./types";
 
-const EMPTY_STATE: SyncState = { version: 1, records: {} };
+const EMPTY_STATE: SyncState = { version: 2, records: {} };
 
 export class StateStore {
   private state?: SyncState;
@@ -19,10 +19,16 @@ export class StateStore {
     const ioUtils = ztoolkit.getGlobal("IOUtils") as any;
     try {
       const parsed = JSON.parse(await ioUtils.readUTF8(this.path));
-      if (parsed.version !== 1 || typeof parsed.records !== "object") {
+      if (
+        (parsed.version !== 1 && parsed.version !== 2) ||
+        typeof parsed.records !== "object"
+      ) {
         throw new Error("Unsupported sync state version");
       }
-      this.state = parsed as SyncState;
+      this.state = {
+        version: 2,
+        records: parsed.records as Record<string, SyncRecord>,
+      };
     } catch (error) {
       if ((error as any)?.name !== "NotFoundError") {
         ztoolkit.log("Unable to read sync state; starting empty", error);

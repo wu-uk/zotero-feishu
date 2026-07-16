@@ -8,14 +8,20 @@ import type { DocumentModel, SyncRecord } from "../src/modules/types";
 
 const MODEL: DocumentModel = {
   title: "Example",
-  blocks: [],
+  sections: [
+    {
+      key: "metadata",
+      sourceHash: "metadata-hash",
+      blocks: [{ type: "paragraph", runs: [{ text: "Metadata" }] }],
+    },
+  ],
   sourceHash: "source-hash",
 };
 
 describe("SyncService", function () {
   it("recreates an unchanged item when its Feishu document was deleted", async function () {
     const state = new MemoryState(record("deleted-document", MODEL.sourceHash));
-    const calls = { create: 0, replace: [] as string[] };
+    const calls = { create: 0, write: [] as string[] };
     const client = fakeClient({
       documentExists: async () => false,
       createDocument: async () => {
@@ -25,9 +31,9 @@ describe("SyncService", function () {
           documentUrl: "https://feishu.cn/docx/replacement-document",
         };
       },
-      replaceDocument: async (documentId) => {
-        calls.replace.push(documentId);
-        return [];
+      syncDocumentSections: async (documentId) => {
+        calls.write.push(documentId);
+        return writeResult();
       },
     });
     const service = createService(state, client);
@@ -36,7 +42,7 @@ describe("SyncService", function () {
 
     assert.equal(result.outcome, "created");
     assert.equal(calls.create, 1);
-    assert.deepEqual(calls.replace, ["replacement-document"]);
+    assert.deepEqual(calls.write, ["replacement-document"]);
     assert.equal(state.current?.documentId, "replacement-document");
     assert.equal(state.current?.sourceHash, MODEL.sourceHash);
   });
@@ -62,7 +68,7 @@ describe("SyncService", function () {
   it("serializes concurrent operations for the same Zotero item", async function () {
     const state = new MemoryState();
     let createCalls = 0;
-    let replaceCalls = 0;
+    let writeCalls = 0;
     let releaseReplace!: () => void;
     const replaceGate = new Promise<void>((resolve) => {
       releaseReplace = resolve;
@@ -76,17 +82,17 @@ describe("SyncService", function () {
           documentUrl: "https://feishu.cn/docx/created-document",
         };
       },
-      replaceDocument: async () => {
-        replaceCalls++;
+      syncDocumentSections: async () => {
+        writeCalls++;
         await replaceGate;
-        return [];
+        return writeResult();
       },
     });
     const service = createService(state, client);
     const item = fakeItem();
 
     const first = service.syncItem(item);
-    await waitUntil(() => replaceCalls === 1);
+    await waitUntil(() => writeCalls === 1);
     const second = service.syncItem(item);
     releaseReplace();
     const results = await Promise.all([first, second]);
@@ -96,7 +102,7 @@ describe("SyncService", function () {
       ["created", "unchanged"],
     );
     assert.equal(createCalls, 1);
-    assert.equal(replaceCalls, 1);
+    assert.equal(writeCalls, 1);
   });
 });
 
@@ -140,7 +146,7 @@ function fakeClient(overrides: Partial<SyncClient> = {}): SyncClient {
       documentUrl: "https://feishu.cn/docx/created-document",
     }),
     documentExists: async () => true,
-    replaceDocument: async () => [],
+    syncDocumentSections: async () => writeResult(),
     deleteDocument: async () => undefined,
     ...overrides,
   };
@@ -163,6 +169,20 @@ function record(documentId: string, sourceHash: string): SyncRecord {
     documentUrl: `https://feishu.cn/docx/${documentId}`,
     sourceHash,
     lastSyncedAt: "2026-07-14T00:00:00.000Z",
+  };
+}
+
+function writeResult() {
+  return {
+    sections: [
+      {
+        key: "metadata",
+        sourceHash: "metadata-hash",
+        blockIds: ["metadata-block"],
+      },
+    ],
+    errors: [],
+    rebuilt: false,
   };
 }
 

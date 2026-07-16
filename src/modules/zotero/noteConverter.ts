@@ -1,44 +1,81 @@
-import type { RichBlock, TextBlock, TextRun, TextStyle } from "../types";
+import type {
+  EquationSource,
+  RichBlock,
+  TextBlock,
+  TextRun,
+  TextStyle,
+} from "../types";
 
-export function noteHtmlToBlocks(html: string): RichBlock[] {
+export interface NoteFragment {
+  blocks: RichBlock[];
+}
+
+export function noteHtmlToBlocks(
+  html: string,
+  leadingTitleToOmit = "",
+): RichBlock[] {
+  return noteHtmlToFragments(html, leadingTitleToOmit).flatMap(
+    (fragment) => fragment.blocks,
+  );
+}
+
+export function noteHtmlToFragments(
+  html: string,
+  leadingTitleToOmit = "",
+): NoteFragment[] {
   const parser = new (Zotero.getMainWindow() as any).DOMParser();
   const document = parser.parseFromString(
     `<body>${html}</body>`,
     "text/html",
   ) as Document;
-  const blocks: RichBlock[] = [];
   const body = document.body;
-  if (!body) return [{ type: "paragraph", runs: [{ text: "(Empty note)" }] }];
+  if (!body) return [emptyFragment()];
   const root = noteContentRoot(body);
-  let convertibleHtml = "";
-  const flushConvertibleHtml = () => {
-    if (convertibleHtml.trim()) {
-      blocks.push({ type: "html", content: convertibleHtml });
-    }
-    convertibleHtml = "";
-  };
-  Array.from(root.childNodes).forEach((node) => {
-    if (!node || !meaningfulNode(node)) return;
-    if (containsImage(node)) {
-      flushConvertibleHtml();
-      appendBlockNode(node, blocks);
-      return;
-    }
-    if (isOrderedList(node)) {
-      flushConvertibleHtml();
-      blocks.push({
+  const leadingTitle = matchingLeadingTitle(root, leadingTitleToOmit);
+  const fragments = Array.from(root.childNodes)
+    .filter((node): node is Node =>
+      Boolean(node && meaningfulNode(node) && node !== leadingTitle),
+    )
+    .map(nodeToFragment);
+  return fragments.length ? fragments : [emptyFragment()];
+}
+
+function nodeToFragment(node: Node): NoteFragment {
+  const blocks: RichBlock[] = [];
+  if (containsImage(node)) {
+    appendBlockNode(node, blocks);
+    return { blocks };
+  }
+  if (isOrderedList(node)) {
+    const equations: EquationSource[] = [];
+    const list = prepareElementForConversion(node as Element, equations);
+    return {
+      blocks: [
+        {
+          type: "html",
+          content: splitOrderedListItems(list),
+          normalizeOrderedListItems: true,
+          ...(equations.length ? { equations } : {}),
+        },
+      ],
+    };
+  }
+  const equations: EquationSource[] = [];
+  return {
+    blocks: [
+      {
         type: "html",
-        content: splitOrderedListItems(node as Element),
-        normalizeOrderedListItems: true,
-      });
-      return;
-    }
-    convertibleHtml += serializeNode(node);
-  });
-  flushConvertibleHtml();
-  return blocks.length
-    ? blocks
-    : [{ type: "paragraph", runs: [{ text: "(Empty note)" }] }];
+        content: serializeNode(node, equations),
+        ...(equations.length ? { equations } : {}),
+      },
+    ],
+  };
+}
+
+function emptyFragment(): NoteFragment {
+  return {
+    blocks: [{ type: "paragraph", runs: [{ text: "(Empty note)" }] }],
+  };
 }
 
 function noteContentRoot(body: HTMLElement): HTMLElement {
@@ -55,6 +92,27 @@ function noteContentRoot(body: HTMLElement): HTMLElement {
 
 function meaningfulNode(node: Node): boolean {
   return node.nodeType === 1 || Boolean(node.textContent?.trim());
+}
+
+function matchingLeadingTitle(
+  root: HTMLElement,
+  title: string,
+): Node | undefined {
+  const normalizedTitle = normalizeTitle(title);
+  if (!normalizedTitle) return undefined;
+  const first = Array.from(root.childNodes).find((node): node is Node =>
+    Boolean(node && meaningfulNode(node)),
+  );
+  if (!first || first.nodeType !== 1) return undefined;
+  const element = first as Element;
+  if (!/^h[1-6]$/i.test(element.tagName)) return undefined;
+  return normalizeTitle(element.textContent || "") === normalizedTitle
+    ? first
+    : undefined;
+}
+
+function normalizeTitle(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function containsImage(node: Node): boolean {
@@ -88,9 +146,61 @@ function splitOrderedListItems(element: Element): string {
     .join("");
 }
 
-function serializeNode(node: Node): string {
-  if (node.nodeType === 1) return String((node as Element).outerHTML);
+function serializeNode(node: Node, equations: EquationSource[]): string {
+  if (node.nodeType === 1) {
+    return String(
+      prepareElementForConversion(node as Element, equations).outerHTML,
+    );
+  }
   return `<p>${escapeHtml(node.textContent || "")}</p>`;
+}
+
+function prepareElementForConversion(
+  source: Element,
+  equations: EquationSource[],
+): Element {
+  const element = source.cloneNode(true) as Element;
+  if (isMathElement(element)) return equationReplacement(element, equations);
+  const mathElements = Array.from(
+    element.querySelectorAll(".math"),
+  ) as Element[];
+  mathElements.forEach((math) => {
+    math.replaceWith(equationReplacement(math, equations));
+  });
+  return element;
+}
+
+function isMathElement(element: Element): boolean {
+  return element.classList.contains("math");
+}
+
+function equationReplacement(
+  element: Element,
+  equations: EquationSource[],
+): Element {
+  const equation = unwrapMath(element.textContent || "");
+  const document = element.ownerDocument;
+  if (!document) throw new Error("Zotero math element has no owner document");
+  const display = element.tagName.toLowerCase() === "pre";
+  const marker = document.createElement(display ? "p" : "span");
+  marker.textContent = equationMarker(equations.length);
+  equations.push({ content: equation, display });
+  return marker;
+}
+
+function unwrapMath(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("$$") && trimmed.endsWith("$$")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("$") && trimmed.endsWith("$")) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function equationMarker(index: number): string {
+  return `__ZOTERO_FEISHU_EQUATION_${index}__`;
 }
 
 function escapeHtml(value: string): string {

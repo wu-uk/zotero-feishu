@@ -1,4 +1,9 @@
-import type { CalloutBlock, TextBlock, TextRun } from "../types";
+import type {
+  CalloutBlock,
+  EquationSource,
+  TextBlock,
+  TextRun,
+} from "../types";
 
 export interface ConvertedBlocks {
   firstLevelBlockIds: string[];
@@ -104,6 +109,26 @@ export function normalizeConvertedOrderedListItems(
   return { firstLevelBlockIds: normalizedRoots, descendants };
 }
 
+export function restoreConvertedEquations(
+  converted: ConvertedBlocks,
+  equations: EquationSource[],
+): ConvertedBlocks {
+  for (const block of converted.descendants) {
+    const text = textBlockContent(block);
+    if (!text?.elements) continue;
+    const restored = text.elements.map((element: any) =>
+      restoreEquationElements(element, equations),
+    );
+    text.elements = restored.flatMap(
+      (result: RestoredEquationElements) => result.elements,
+    );
+    if (restored.some((result: RestoredEquationElements) => result.display)) {
+      text.style = { ...(text.style || {}), align: 2 };
+    }
+  }
+  return converted;
+}
+
 export function toFeishuBlock(block: TextBlock | { type: "divider" }): any {
   if (block.type === "divider") return { block_type: 22, divider: {} };
   const mapping: Record<string, [number, string]> = {
@@ -124,6 +149,81 @@ export function toFeishuBlock(block: TextBlock | { type: "divider" }): any {
     block_type: blockType,
     [property]: { elements: block.runs.map(toTextElement), style: {} },
   };
+}
+
+function textBlockContent(block: any): any {
+  const properties = [
+    "page",
+    "text",
+    "heading1",
+    "heading2",
+    "heading3",
+    "heading4",
+    "heading5",
+    "heading6",
+    "heading7",
+    "heading8",
+    "heading9",
+    "bullet",
+    "ordered",
+    "code",
+    "quote",
+    "todo",
+  ];
+  for (const property of properties) {
+    if (block?.[property]?.elements) return block[property];
+  }
+  return undefined;
+}
+
+interface RestoredEquationElements {
+  elements: any[];
+  display: boolean;
+}
+
+function restoreEquationElements(
+  element: any,
+  equations: EquationSource[],
+): RestoredEquationElements {
+  const textRun = element?.text_run;
+  const content = textRun?.content;
+  if (typeof content !== "string") {
+    return { elements: [element], display: false };
+  }
+
+  const marker = /__ZOTERO_FEISHU_EQUATION_(\d+)__/g;
+  const restored: any[] = [];
+  let display = false;
+  let cursor = 0;
+  for (const match of content.matchAll(marker)) {
+    const index = Number(match[1]);
+    const equation = equations[index];
+    if (equation === undefined) {
+      throw new Error("Feishu equation marker does not match its source");
+    }
+    if (match.index > cursor) {
+      restored.push({
+        text_run: { ...textRun, content: content.slice(cursor, match.index) },
+      });
+    }
+    restored.push({
+      equation: {
+        content: equation.content,
+        text_element_style: textRun.text_element_style || {},
+      },
+    });
+    display ||= equation.display;
+    cursor = match.index + match[0].length;
+  }
+  if (!restored.length) {
+    return { elements: [element], display: false };
+  }
+  if (cursor < content.length) {
+    restored.push({
+      text_run: { ...textRun, content: content.slice(cursor) },
+    });
+  }
+  return { elements: restored, display };
 }
 
 function isExplicitOrderedBlock(block: any): boolean {

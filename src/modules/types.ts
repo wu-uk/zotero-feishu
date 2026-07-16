@@ -18,11 +18,18 @@ export interface SyncRecord {
   documentUrl: string;
   sourceHash: string;
   lastSyncedAt: string;
+  sections?: SyncedSection[];
 }
 
 export interface SyncState {
-  version: 1;
+  version: 2;
   records: Record<string, SyncRecord>;
+}
+
+export interface SyncedSection {
+  key: string;
+  sourceHash: string;
+  blockIds: string[];
 }
 
 export interface TextStyle {
@@ -37,6 +44,11 @@ export interface TextStyle {
 export interface TextRun {
   text: string;
   style?: TextStyle;
+}
+
+export interface EquationSource {
+  content: string;
+  display: boolean;
 }
 
 export interface TextBlock {
@@ -72,6 +84,7 @@ export type RichBlock =
       type: "html";
       content: string;
       normalizeOrderedListItems?: boolean;
+      equations?: EquationSource[];
     }
   | {
       type: "file";
@@ -88,8 +101,20 @@ export type RichBlock =
 
 export interface DocumentModel {
   title: string;
-  blocks: RichBlock[];
+  sections: DocumentSection[];
   sourceHash: string;
+}
+
+export interface DocumentSection {
+  key: string;
+  sourceHash: string;
+  blocks: RichBlock[];
+}
+
+export interface DocumentWriteResult {
+  sections: SyncedSection[];
+  errors: string[];
+  rebuilt: boolean;
 }
 
 export type SyncOutcome =

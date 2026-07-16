@@ -16,7 +16,7 @@ export interface SourceData {
   url: string;
   abstract: string;
   tags: string[];
-  notes: Array<{ title: string; html: string }>;
+  notes: Array<{ key: string; title: string; html: string }>;
   pdfs: PdfAttachmentSource[];
 }
 
@@ -28,7 +28,11 @@ export async function collectSource(item: Zotero.Item): Promise<SourceData> {
       typeof (note as any)?.getNoteTitle === "function"
         ? (note as any).getNoteTitle()
         : `Note ${index + 1}`;
-    return { title: String(title || `Note ${index + 1}`), html };
+    return {
+      key: String(note?.key || id),
+      title: String(title || `Note ${index + 1}`),
+      html,
+    };
   });
   const date = field(item, "date");
   const year = date.match(/\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b/)?.[1] || "";

@@ -1,6 +1,8 @@
 import { assert } from "chai";
 import {
+  buildNoteSections,
   noteHtmlToBlocks,
+  noteHtmlToFragments,
   pdfAttachmentsToBlocks,
 } from "../src/modules/documentBuilder";
 import {
@@ -10,6 +12,7 @@ import {
   prepareCalloutBlock,
   prepareConvertedBlocks,
   requireMediaFileToken,
+  restoreConvertedEquations,
 } from "../src/modules/feishuClient";
 
 describe("Zotero Feishu Sync helpers", function () {
@@ -42,13 +45,37 @@ describe("Zotero Feishu Sync helpers", function () {
     const blocks = noteHtmlToBlocks(
       '<div data-schema-version="9"><h3>Section</h3><ul><li>One<ul><li>Nested</li></ul></li></ul><pre><code>const n = 1;</code></pre><table><tbody><tr><td>A</td><td>B</td></tr></tbody></table></div>',
     );
+    assert.lengthOf(blocks, 4);
+    assert.deepEqual(
+      blocks.map((block) => block.type),
+      ["html", "html", "html", "html"],
+    );
+    assert.equal((blocks[0] as any).content, "<h3>Section</h3>");
+    assert.equal(
+      (blocks[1] as any).content,
+      "<ul><li>One<ul><li>Nested</li></ul></li></ul>",
+    );
+    assert.equal(
+      (blocks[2] as any).content,
+      "<pre><code>const n = 1;</code></pre>",
+    );
+    assert.include((blocks[3] as any).content, "<table>");
+  });
+
+  it("omits a leading note heading that duplicates the Zotero title", function () {
+    const blocks = noteHtmlToBlocks(
+      '<div data-schema-version="9"><h2>Research Questions</h2><p>Body</p></div>',
+      "Research Questions",
+    );
     assert.lengthOf(blocks, 1);
-    assert.equal(blocks[0].type, "html");
-    const content = (blocks[0] as any).content;
-    assert.include(content, "<h3>Section</h3>");
-    assert.include(content, "<ul><li>One<ul><li>Nested</li></ul></li></ul>");
-    assert.include(content, "<pre><code>const n = 1;</code></pre>");
-    assert.include(content, "<table>");
+    assert.equal((blocks[0] as any).content, "<p>Body</p>");
+
+    const different = noteHtmlToBlocks(
+      '<div data-schema-version="9"><h2>Overview</h2><p>Body</p></div>',
+      "Research Questions",
+    );
+    assert.lengthOf(different, 2);
+    assert.equal((different[0] as any).content, "<h2>Overview</h2>");
   });
 
   it("marks real ordered items before native Feishu conversion", function () {
@@ -67,6 +94,107 @@ describe("Zotero Feishu Sync helpers", function () {
       '<ol start="1"><li><p><strong>First</strong></p><p>Body</p></li></ol><ol start="4"><li value="4"><p>Fourth</p></li></ol>',
     );
     assert.equal((blocks[2] as any).content, "<p>After</p>");
+  });
+
+  it("restores Zotero inline and block math as Feishu equations", function () {
+    const blocks = noteHtmlToBlocks(
+      '<div data-schema-version="9"><p>Given <span class="math">$M$</span> and <span class="math">$X$</span>.</p><pre class="math">$$H^*=\\arg\\max_H r(H)$$</pre></div>',
+    );
+    assert.lengthOf(blocks, 2);
+    const inlineHtml = blocks[0] as any;
+    const displayHtml = blocks[1] as any;
+    assert.deepEqual(inlineHtml.equations, [
+      { content: "M", display: false },
+      { content: "X", display: false },
+    ]);
+    assert.equal(
+      inlineHtml.content,
+      "<p>Given <span>__ZOTERO_FEISHU_EQUATION_0__</span> and <span>__ZOTERO_FEISHU_EQUATION_1__</span>.</p>",
+    );
+    assert.deepEqual(displayHtml.equations, [
+      { content: "H^*=\\arg\\max_H r(H)", display: true },
+    ]);
+    assert.equal(displayHtml.content, "<p>__ZOTERO_FEISHU_EQUATION_0__</p>");
+
+    const inlineConverted = restoreConvertedEquations(
+      {
+        firstLevelBlockIds: ["inline"],
+        descendants: [
+          textBlock(
+            "inline",
+            "Given __ZOTERO_FEISHU_EQUATION_0__ and __ZOTERO_FEISHU_EQUATION_1__.",
+          ),
+        ],
+      },
+      inlineHtml.equations,
+    );
+    const displayConverted = restoreConvertedEquations(
+      {
+        firstLevelBlockIds: ["block"],
+        descendants: [textBlock("block", "__ZOTERO_FEISHU_EQUATION_0__")],
+      },
+      displayHtml.equations,
+    );
+    const inline = inlineConverted.descendants[0].text.elements;
+    assert.deepEqual(
+      inline.map((element: any) =>
+        element.equation
+          ? { equation: element.equation.content }
+          : { text: element.text_run.content },
+      ),
+      [
+        { text: "Given " },
+        { equation: "M" },
+        { text: " and " },
+        { equation: "X" },
+        { text: "." },
+      ],
+    );
+    assert.equal(
+      displayConverted.descendants[0].text.elements[0].equation.content,
+      "H^*=\\arg\\max_H r(H)",
+    );
+    assert.equal(inlineConverted.descendants[0].text.style.align, 1);
+    assert.equal(displayConverted.descendants[0].text.style.align, 2);
+  });
+
+  it("keeps stable fragment identities across nearby note edits", async function () {
+    const original = await buildNoteSections(
+      {
+        key: "NOTE123",
+        title: "Example note",
+        html: "<p>Alpha</p><p>Beta</p>",
+      },
+      0,
+    );
+    const inserted = await buildNoteSections(
+      {
+        key: "NOTE123",
+        title: "Example note",
+        html: "<p>Introduction</p><p>Alpha</p><p>Beta</p>",
+      },
+      0,
+    );
+    const changed = await buildNoteSections(
+      {
+        key: "NOTE123",
+        title: "Example note",
+        html: "<p>Alpha</p><p>Gamma</p>",
+      },
+      0,
+    );
+
+    assert.equal(original[0].key, "note:NOTE123:heading");
+    assert.deepEqual(
+      inserted.slice(2).map((section) => section.key),
+      original.slice(1).map((section) => section.key),
+    );
+    assert.equal(changed[1].key, original[1].key);
+    assert.notEqual(changed[2].key, original[2].key);
+    assert.lengthOf(
+      noteHtmlToFragments("<p>Alpha</p><ol><li>One</li></ol><p>Beta</p>"),
+      3,
+    );
   });
 
   it("restores paragraphs and nested blocks inside ordered items", function () {
@@ -241,6 +369,24 @@ function orderedBlock(blockId: string, sequence: string, content: string): any {
     ordered: {
       elements: [content],
       style: { align: 1, sequence },
+    },
+  };
+}
+
+function textBlock(blockId: string, content: string): any {
+  return {
+    block_id: blockId,
+    block_type: 2,
+    text: {
+      elements: [
+        {
+          text_run: {
+            content,
+            text_element_style: { bold: false, italic: false },
+          },
+        },
+      ],
+      style: { align: 1 },
     },
   };
 }

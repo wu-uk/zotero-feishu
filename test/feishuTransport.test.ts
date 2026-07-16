@@ -2,6 +2,7 @@ import { assert } from "chai";
 import { FeishuClient } from "../src/modules/feishuClient";
 import type { OAuthService } from "../src/modules/oauthService";
 import { FeishuError, FeishuTransport } from "../src/modules/feishu/transport";
+import type { DocumentSection, SyncedSection } from "../src/modules/types";
 
 describe("Feishu transport", function () {
   let originalRequest: typeof Zotero.HTTP.request;
@@ -92,6 +93,72 @@ describe("Feishu transport", function () {
       openId: "ou_example",
     });
   });
+
+  it("replaces only the changed document section", async function () {
+    const requests: Array<{ method: string; url: string; body?: any }> = [];
+    const rootBlocks = [
+      { block_id: "metadata-block" },
+      { block_id: "old-note-block" },
+      { block_id: "pdf-block" },
+    ];
+    Zotero.HTTP.request = (async (method, url, options) => {
+      const body = options?.body ? JSON.parse(String(options.body)) : undefined;
+      requests.push({ method, url, body });
+      if (method === "GET" && url.endsWith("/children?page_size=500")) {
+        return response({ items: rootBlocks, has_more: false });
+      }
+      if (method === "DELETE" && url.includes("/batch_delete")) {
+        rootBlocks.splice(body.start_index, body.end_index - body.start_index);
+        return response({ document_revision_id: 2 });
+      }
+      if (method === "POST" && url.includes("/children?")) {
+        const created = body.children.map((block: any, index: number) => ({
+          ...block,
+          block_id: `new-note-block-${index}`,
+        }));
+        rootBlocks.splice(body.index, 0, ...created);
+        return response({ children: created });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }) as typeof Zotero.HTTP.request;
+
+    const previous: SyncedSection[] = [
+      syncedSection("metadata", "metadata-v1", ["metadata-block"]),
+      syncedSection("note:A", "note-v1", ["old-note-block"]),
+      syncedSection("pdfs", "pdfs-v1", ["pdf-block"]),
+    ];
+    const desired: DocumentSection[] = [
+      documentSection("metadata", "metadata-v1"),
+      documentSection("note:A", "note-v2"),
+      documentSection("pdfs", "pdfs-v1"),
+    ];
+    const result = await new FeishuClient(
+      createOAuth("user-token"),
+    ).syncDocumentSections("document-id", desired, previous, async () => "");
+
+    assert.isFalse(result.rebuilt);
+    assert.deepEqual(
+      rootBlocks.map((block) => block.block_id),
+      ["metadata-block", "new-note-block-0", "pdf-block"],
+    );
+    assert.deepEqual(result.sections, [
+      previous[0],
+      syncedSection("note:A", "note-v2", ["new-note-block-0"]),
+      previous[2],
+    ]);
+    assert.lengthOf(
+      requests.filter((request) => request.method === "DELETE"),
+      1,
+    );
+    assert.deepInclude(
+      requests.find((request) => request.method === "DELETE")?.body,
+      { start_index: 1, end_index: 2 },
+    );
+    assert.equal(
+      requests.find((request) => request.method === "POST")?.body.index,
+      1,
+    );
+  });
 });
 
 function createTransport(accessToken: string): FeishuTransport {
@@ -102,4 +169,24 @@ function createOAuth(accessToken: string): OAuthService {
   return {
     getAccessToken: async () => accessToken,
   } as OAuthService;
+}
+
+function response(data: Record<string, unknown>): any {
+  return { status: 200, response: { code: 0, data } };
+}
+
+function documentSection(key: string, sourceHash: string): DocumentSection {
+  return {
+    key,
+    sourceHash,
+    blocks: [{ type: "paragraph", runs: [{ text: key }] }],
+  };
+}
+
+function syncedSection(
+  key: string,
+  sourceHash: string,
+  blockIds: string[],
+): SyncedSection {
+  return { key, sourceHash, blockIds };
 }
