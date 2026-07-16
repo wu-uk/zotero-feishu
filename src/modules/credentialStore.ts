@@ -60,7 +60,8 @@ export class CredentialStore {
     const raw = this.find(TOKENS_USER)?.password;
     if (!raw) return undefined;
     try {
-      return JSON.parse(raw) as OAuthTokens;
+      const value = JSON.parse(raw) as unknown;
+      return isOAuthTokens(value) ? value : undefined;
     } catch {
       return undefined;
     }
@@ -74,4 +75,20 @@ export class CredentialStore {
     const login = this.find(TOKENS_USER);
     if (login) this.loginManager.removeLogin(login);
   }
+}
+
+function isOAuthTokens(value: unknown): value is OAuthTokens {
+  if (!value || typeof value !== "object") return false;
+  const tokens = value as Record<string, unknown>;
+  return (
+    typeof tokens.accessToken === "string" &&
+    Boolean(tokens.accessToken) &&
+    typeof tokens.refreshToken === "string" &&
+    Boolean(tokens.refreshToken) &&
+    typeof tokens.expiresAt === "number" &&
+    Number.isFinite(tokens.expiresAt) &&
+    typeof tokens.refreshExpiresAt === "number" &&
+    Number.isFinite(tokens.refreshExpiresAt) &&
+    typeof tokens.scope === "string"
+  );
 }

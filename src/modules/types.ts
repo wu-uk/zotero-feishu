@@ -11,24 +11,32 @@ export interface FeishuUser {
   openId: string;
 }
 
+export interface PendingSync {
+  targetSourceHash: string;
+  startedAt: string;
+}
+
 export interface SyncRecord {
   libraryID: number;
   itemKey: string;
   documentId: string;
   documentUrl: string;
+  documentTitle?: string;
   sourceHash: string;
   lastSyncedAt: string;
   sections?: SyncedSection[];
+  pendingSync?: PendingSync;
 }
 
 export interface SyncState {
-  version: 2;
+  version: 3;
   records: Record<string, SyncRecord>;
 }
 
 export interface SyncedSection {
   key: string;
   sourceHash: string;
+  remoteHash?: string;
   blockIds: string[];
 }
 
